@@ -1,18 +1,37 @@
-// middleware/authMiddleware.js
-const jwt = require('jsonwebtoken');
+// middlewares/authMiddleware.js
+const jwt = require("jsonwebtoken");
 
-const authenticateToken = (req, res, next) => {
-  const token = req.header('Authorization')?.split(' ')[1];
-  if (!token) {
-    return res.status(401).json({ message: 'Access denied' });
+const AuthenticateToken = async (req, res, next) => {
+  // Check if the token is in the 'Authorization' header
+  const authHeader = req.headers["authorization"];
+  let token;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
   }
+
+  if (!token) {
+    return res
+      .status(401)
+      .json({ message: "Access denied. No token provided." });
+  }
+
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    // Verify the token with the secret
+    const verified = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (typeof verified === "string" || !verified.email) {
+      return res.status(401).json({ message: "Token invalid or expired" });
+    }
+
+    // Set the user information in the request
+    req.user = { email: verified.email, roles: verified.roles };
+
+    // Proceed to the next middleware or route handler
     next();
   } catch (error) {
-    res.status(400).json({ message: 'Invalid token' });
+    console.error("JWT verification failed:", error.message);
+    res.status(401).json({ message: "Invalid token" });
   }
 };
 
-module.exports = { authenticateToken };
+module.exports = AuthenticateToken;

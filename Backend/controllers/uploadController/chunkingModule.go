@@ -1,150 +1,64 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
-	"os"
-	"strconv"
-	"sync"
+
+	pb "path/to/chunking/protobuf/generated"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+	"net"
 )
 
-const (
-	ChunkSize      = 64 * 1024 * 1024             // 64 MB
-	MaxRetries     = 3                            // Maximum retries for chunk uploads
-	ChunkServerURL = "http://chunk-server/upload" // Mock chunk server URL
-)
+const chunkSize = 64 * 1024 * 1024 // 64 MB	
 
-// ChunkMetadata holds metadata for a single chunk
-type ChunkMetadata struct {
-	ChunkID    string
-	ChunkIndex int
-	Size       int
-	FileName   string
-	Offset     int64
-	Checksum   string
+type server struct {
+	pb.UnimplementedChunkServiceServer
 }
 
-// UploadResult tracks the result of a single chunk upload
-type UploadResult struct {
-	Success bool
-	Error   error
-}
-
-// uploadChunk uploads a single chunk to the chunk server
-func uploadChunk(chunkData []byte, metadata ChunkMetadata) UploadResult {
-	retries := 0
-
-	for retries < MaxRetries {
-		// Simulate chunk upload via HTTP POST
-		req, err := http.NewRequest("POST", ChunkServerURL, bytes.NewReader(chunkData))
-		if err != nil {
-			return UploadResult{Success: false, Error: err}
-		}
-
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("Chunk-ID", metadata.ChunkID)
-		req.Header.Set("Chunk-Index", strconv.Itoa(metadata.ChunkIndex))
-		req.Header.Set("File-Name", metadata.FileName)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			retries++
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Success
-		return UploadResult{Success: true, Error: nil}
-	}
-
-	// Failure after retries
-	return UploadResult{Success: false, Error: fmt.Errorf("failed to upload chunk after %d retries", MaxRetries)}
-}
-
-// processFile handles streaming the file, splitting it into chunks, and uploading them in parallel
-func processFile(filePath string, fileName string) error {
-	// Open file
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	buffer := make([]byte, ChunkSize)
+// UploadChunk handles the streamed file chunks from the Node.js client
+func (s *server) UploadChunk(stream pb.ChunkService_UploadChunkServer) error {
 	chunkIndex := 0
-	offset := int64(0)
-
-	var wg sync.WaitGroup
-	errorChannel := make(chan error, 1) // Channel to handle upload errors
+	totalBytes := int64(0)
 
 	for {
-		// Read data into buffer
-		bytesRead, err := reader.Read(buffer)
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("error reading file: %w", err)
-		}
-
-		if bytesRead == 0 {
-			break // End of file
-		}
-
-		// Prepare chunk metadata
-		metadata := ChunkMetadata{
-			ChunkID:    fmt.Sprintf("%s_chunk_%d", fileName, chunkIndex),
-			ChunkIndex: chunkIndex,
-			Size:       bytesRead,
-			FileName:   fileName,
-			Offset:     offset,
-		}
-
-		// Capture the chunk data to avoid overwriting in parallel goroutines
-		chunkData := make([]byte, bytesRead)
-		copy(chunkData, buffer[:bytesRead])
-
-		// Launch a goroutine to upload the chunk
-		wg.Add(1)
-		go func(chunkData []byte, metadata ChunkMetadata) {
-			defer wg.Done()
-			result := uploadChunk(chunkData, metadata)
-			if !result.Success {
-				errorChannel <- result.Error
+		// Receive the next chunk from the client
+		req, err := stream.Recv()
+		if err == io.EOF {
+			// End of stream, send response
+			response := &pb.ChunkResponse{
+				Message: fmt.Sprintf("All chunks processed successfully. Total bytes: %d", totalBytes),
+				Success: true,
 			}
-		}(chunkData, metadata)
+			return stream.SendAndClose(response)
+		}
+		if err != nil {
+			return fmt.Errorf("error receiving chunk: %w", err)
+		}
 
-		// Update offset and chunk index
-		offset += int64(bytesRead)
+		// Process the chunk
+		log.Printf("Processing chunk %d (offset: %d, size: %d bytes)\n",
+			req.ChunkIndex, req.Offset, len(req.ChunkData))
+
+		// Simulate chunk storage or processing
+		totalBytes += int64(len(req.ChunkData))
 		chunkIndex++
 	}
-
-	// Wait for all uploads to complete
-	go func() {
-		wg.Wait()
-		close(errorChannel)
-	}()
-
-	// Check for errors
-	for err := range errorChannel {
-		if err != nil {
-			return fmt.Errorf("upload failed: %w", err)
-		}
-	}
-
-	log.Printf("File %s successfully uploaded in %d chunks", fileName, chunkIndex)
-	return nil
 }
 
 func main() {
-	// Mock file upload
-	filePath := "largefile.txt" // Path to file to upload
-	fileName := "largefile.txt"
-
-	err := processFile(filePath, fileName)
+	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		log.Fatalf("Upload failed: %v", err)
+		log.Fatalf("Failed to listen: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterChunkServiceServer(grpcServer, &server{})
+	reflection.Register(grpcServer)
+
+	log.Println("Go Chunking Service running on port 50051")
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
 	}
 }

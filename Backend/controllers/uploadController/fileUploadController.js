@@ -4,6 +4,7 @@ const multer = require("multer");
 const { Readable } = require("stream");
 const { Worker } = require("worker_threads");
 const getProgress = require("./progressTracker");
+
 const PROTO_PATH = "./uploadgRPCController.proto";
 const CHUNKING_SERVICE_URL = "localhost:50051";
 
@@ -35,7 +36,7 @@ let processedChunks = 0;
 
 // Create Worker Threads
 for (let i = 0; i < MAX_WORKERS; i++) {
-  const worker = new Worker("./worker.js"); // Worker script to process chunks
+  const worker = new Worker("./uploadWorker.js"); // Worker script to process chunks
   workerPool.push(worker);
 
   worker.on("message", (message) => {
@@ -70,61 +71,64 @@ for (let i = 0; i < MAX_WORKERS; i++) {
   });
 }
 
-const uploadFile = async (req, res) => {
-  const { file } = req;
-  if (!file) {
-    return res.status(400).json({ error: "No file uploaded" });
-  }
 
-  try {
-    const readableStream = Readable.from(file.buffer);
-    let offset = 0;
-    let chunkIndex = 0;
 
-    // Determine total chunks for progress tracking
-    totalChunks = Math.ceil(file.buffer.length / (64 * 1024 * 1024)); // Assuming 64 MB chunks
+  // upload file function in gRPC.
+  const uploadFile = async (req, res) => {
+    const { file } = req;
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
 
-    readableStream.on("data", (chunk) => {
-      const task = {
-        chunkIndex,
-        chunkData: chunk,
-        offset,
-        fileName: file.originalname,
-        retries: 0, // Initialize retry count
-      };
+    try {
+      const readableStream = Readable.from(file.buffer);
+      let offset = 0;
+      let chunkIndex = 0;
 
-      // Assign task to an available worker or enqueue
-      const availableWorker = workerPool.find((worker) => worker.threadId !== undefined);
-      if (availableWorker) {
-        availableWorker.postMessage(task);
-      } else {
-        taskQueue.push(task);
-      }
+      // Determine total chunks for progress tracking
+      totalChunks = Math.ceil(file.buffer.length / (64 * 1024 * 1024)); // Assuming 64 MB chunks
 
-      offset += chunk.length;
-      chunkIndex++;
-    });
+      readableStream.on("data", (chunk) => {
+        const task = {
+          chunkIndex,
+          chunkData: chunk,
+          offset,
+          fileName: file.originalname,
+          retries: 0, // Initialize retry count
+        };
 
-    readableStream.on("end", () => {
-      console.log("File streaming completed.");
-      res.json({
-        message: "File uploaded and processed successfully.",
-        totalChunks,
-        processedChunks,
+        // Assign task to an available worker or enqueue
+        const availableWorker = workerPool.find((worker) => worker.threadId !== undefined);
+        if (availableWorker) {
+          availableWorker.postMessage(task);
+        } else {
+          taskQueue.push(task);
+        }
+
+        offset += chunk.length;
+        chunkIndex++;
       });
-    });
 
-    readableStream.on("error", (err) => {
-      console.error("Error in file stream:", err);
-      res.status(500).json({ error: "File streaming failed" });
-    });
-  } catch (err) {
-    console.error("Error processing file upload:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
+      readableStream.on("end", () => {
+        console.log("File streaming completed.");
+        res.json({
+          message: "File uploaded and processed successfully.",
+          totalChunks,
+          processedChunks,
+        });
+      });
 
-module.exports = {
-  upload,
-  uploadFile,
-};
+      readableStream.on("error", (err) => {
+        console.error("Error in file stream:", err);
+        res.status(500).json({ error: "File streaming failed" });
+      });
+    } catch (err) {
+      console.error("Error processing file upload:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+
+  module.exports = {
+    upload,
+    uploadFile,
+  };

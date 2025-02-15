@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "./";
+
+service ChunkService {
+  rpc WriteChunk(WriteRequest) returns (WriteResponse);
+  rpc ReadChunk(ReadRequest) returns (ReadResponse);
+  rpc SendChunk(ReplicationRequest) returns (ReplicationResponse);
+}
+
+message WriteRequest {
+  string chunk_id = 1;
+  bytes data = 2;
+  int32 version = 3;
+}
+
+message WriteResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ReadRequest {
+  string chunk_id = 1;
+}
+
+message ReadResponse {
+  bool success = 1;
+  bytes data = 2;
+}
+
+message ReplicationRequest {
+  string chunk_id = 1;
+  bytes data = 2;
+}
+
+message ReplicationResponse {
+  bool success = 1;
+  string message = 2;
+}

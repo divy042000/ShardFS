@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  master-server:
+    build: .
+    ports:
+      - "50052:50052"
+    volumes:
+      - .:/app
+    command: ["./masterserver"]

@@ -4,6 +4,4 @@ services:
     build: .
     ports:
       - "50052:50052"
-    volumes:
-      - .:/app
     command: ["./masterserver"]

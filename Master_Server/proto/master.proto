@@ -4,16 +4,13 @@ package proto;
 
 option go_package ="./";
 
+import "heartbeat.proto";
+
 // Master Service
 service MasterService {
   rpc GetChunkLocations(GetChunkRequest) returns (GetChunkResponse);
   rpc ReportChunk(ChunkReport) returns (ChunkResponse);
-}
-
-
-
-service HeartbeatService {
-  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+ rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 
@@ -29,7 +26,9 @@ message GetChunkResponse {
   string chunk_id = 1;
   repeated string chunk_servers = 2;
   bool success = 3;
+  string message = 4;  // ✅ Add this field
 }
+
 
 // Chunk Server reporting new chunk
 message ChunkReport {
@@ -44,15 +43,3 @@ message ChunkResponse {
   string message = 2;
 }
 
-// Heartbeat from Chunk Servers
-message HeartbeatRequest {
-  string server_id = 1;
-  int64 free_space = 2;
-  repeated string stored_chunks = 3;
-}
-
-// Heartbeat Response
-message HeartbeatResponse {
-  bool success = 1;
-  string message = 2;
-}

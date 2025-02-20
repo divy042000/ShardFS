@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "./";
+
+// Heartbeat Service: Chunk Servers send heartbeats to Master Server
+service HeartbeatService {
+  rpc SendHeartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// Heartbeat Request from Chunk Server to Master Server
+message HeartbeatRequest {
+  string server_id = 1;       // Unique ID of the chunk server
+  string storage_path = 2;    // Path to chunk storage directory
+  int64 free_space = 3;       // Available disk space in MB
+  float cpu_usage = 4;        // CPU usage percentage
+  float memory_usage = 5;     // Memory usage percentage
+  float network_usage = 6;    // Network bandwidth usage
+  float load = 7;             // System load average
+  repeated string chunk_ids = 8; // List of stored chunks
+}
+
+// Heartbeat Response from Master Server to Chunk Server
+message HeartbeatResponse {
+  bool success = 1;         // Indicates if heartbeat was received
+  string message = 2;       // Response message from Master
+}
+

@@ -2,7 +2,7 @@
 FROM golang:1.22 AS builder
 
 # Set working directory inside the container
-WORKDIR /chunk_server_1
+WORKDIR /app
 
 # Install gRPC & Protocol Buffers Compiler
 RUN apt-get update && apt-get install -y \
@@ -19,7 +19,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy the entire project source
-COPY . . 
+COPY . .
 
 # Verify module dependencies
 RUN go mod tidy
@@ -31,13 +31,13 @@ RUN go build -o chunkserver .
 FROM alpine:latest
 
 # Set working directory inside the container
-WORKDIR /chunk_server_1
+WORKDIR /app
 
 # Install required dependencies (Alpine is minimal)
 RUN apk --no-cache add ca-certificates
 
 # Copy the built binary from builder stage
-COPY --from=builder /chunk_server_1/chunkserver .
+COPY --from=builder /app/chunkserver .
 
 # Ensure the binary has execute permissions
 RUN chmod +x chunkserver
@@ -46,5 +46,5 @@ RUN chmod +x chunkserver
 EXPOSE 50051
 
 # Run the server
-CMD ["chunkserver"]
+CMD ["./chunkserver"]
 

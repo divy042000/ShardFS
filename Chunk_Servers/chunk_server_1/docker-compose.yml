@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  chunkserver:
+    build:
+      context: .
+      dockerfile: dockerfile  # ✅ Chunk Server Dockerfile
+    container_name: chunk_server_container
+    ports:
+      - "50051:50051"  # ✅ Expose Chunk Server's gRPC port
+    networks:
+      - file_network  # ✅ Shared network with Master Server
+    environment:
+      - MASTER_ADDRESS=master-server:50052  # ✅ Point to Master Server
+    depends_on:
+      - master-server  # ✅ Ensures Master starts before Chunk Server
+    command: ["./chunkserver"]
+
+networks:
+  file_network:
+    driver: bridge  # ✅ Ensures Chunk Server can find Master Server
+

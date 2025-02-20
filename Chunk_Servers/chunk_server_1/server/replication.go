@@ -1,46 +1,46 @@
 package server
 
 import (
-	"context"
-	"log"
-	"path/filepath"
-	"os"
-
-	pb "chunk_server_1/proto"
+    "context"
+    "log"
+    pb "chunk_server_1/proto"
+    "google.golang.org/grpc"
 )
 
-// ReplicateChunk writes a received chunk to disk
-func ReplicateChunk(chunkID string, data []byte, version int) error {
-	chunkPath := filepath.Join("/data", chunkID+".chunk")
-	err := os.WriteFile(chunkPath, data, 0644)
-	if err != nil {
-		log.Printf("Replication error: %v", err)
-		return err
-	}
-	log.Printf("Chunk %s replicated successfully", chunkID)
-	return nil
+type ReplicationManager struct {
+    leaderServer *ChunkServer
 }
 
-// SendChunk now submits the replication request to the Worker Pool
-func (s *ChunkServer) SendChunk(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
-	responseChan := make(chan JobResult, 1)
+func NewReplicationManager(leaderServer *ChunkServer) *ReplicationManager {
+    return &ReplicationManager{leaderServer: leaderServer}
+}
 
-	job := Job{
-		Type:     ReplicationJob,
-		ChunkID:  req.ChunkId,
-		Data:     req.Data,
-		Version:  int(req.Version),
-		Response: responseChan,
-	}
+func (rm *ReplicationManager) ReplicateChunk(chunkID string, data []byte, version int, followers []string) {
+    for _, follower := range followers {
+        go rm.sendChunkToFollower(follower, chunkID, data, version)
+    }
+}
 
-	s.workerPool.SubmitJob(job)
+func (rm *ReplicationManager) sendChunkToFollower(followerAddr, chunkID string, data []byte, version int) {
+    conn, err := grpc.Dial(followerAddr, grpc.WithInsecure())
+    if err != nil {
+        log.Printf("Failed to connect to follower %s: %v", followerAddr, err)
+        return
+    }
+    defer conn.Close()
 
-	result := <-responseChan
-	if !result.Success {
-		log.Printf("SendChunk error: %s", result.Message)
-		return &pb.ReplicationResponse{Success: false, Message: result.Message}, nil
-	}
-
-	log.Printf("Chunk %s replicated successfully", req.ChunkId)
-	return &pb.ReplicationResponse{Success: true, Message: "Chunk replicated"}, nil
+    client := pb.NewChunkServiceClient(conn)
+    req := &pb.ReplicationRequest{
+        ChunkId:   chunkID,
+        Data:      data,
+        Version:   int32(version),
+        Followers: []string{}, // Empty since this is the last in chain
+    }
+    
+    resp, err := client.SendChunk(context.Background(), req)
+    if err != nil || !resp.Success {
+        log.Printf("Replication failed to %s for chunk %s: %v", followerAddr, chunkID, err)
+        return
+    }
+    log.Printf("Successfully replicated chunk %s to follower %s", chunkID, followerAddr)
 }

@@ -1,30 +1,28 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net"
+	"os"
 
-	pb "chunk_server_1/proto"
 	"chunk_server_1/server"
-	"google.golang.org/grpc"
 )
 
 func main() {
-	port := ":50051"
-	listener, err := net.Listen("tcp", port)
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+	// Define server configurations
+	serverID := "chunk_server_1"
+	storagePath := "/data/chunks" // ✅ Ensure this is correctly set
+	masterAddress := "master-server:50052"
+	workerCount := 5 // Number of concurrent worker threads
+
+	// Ensure storage directory exists
+	if err := os.MkdirAll(storagePath, os.ModePerm); err != nil {
+		log.Fatalf("❌ Failed to create storage directory: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
-	chunkServer := server.NewChunkServer("/data", 5) // 5 concurrent workers
+	// Initialize and start the Chunk Server
+	chunkServer := server.NewChunkServer(serverID, storagePath, masterAddress, workerCount)
+	chunkServer.Start()
 
-	pb.RegisterChunkServiceServer(grpcServer, chunkServer)
-
-	fmt.Printf("Chunk Server is running on port %s...\n", port)
-
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Failed to start gRPC server: %v", err)
-	}
+	// Keep the server running
+	select {}
 }

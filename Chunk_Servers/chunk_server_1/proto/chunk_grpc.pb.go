@@ -19,19 +19,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChunkService_WriteChunk_FullMethodName    = "/proto.ChunkService/WriteChunk"
-	ChunkService_ReadChunk_FullMethodName     = "/proto.ChunkService/ReadChunk"
-	ChunkService_SendHeartbeat_FullMethodName = "/proto.ChunkService/SendHeartbeat"
-	ChunkService_SendChunk_FullMethodName     = "/proto.ChunkService/SendChunk"
+	ChunkService_WriteChunk_FullMethodName = "/proto.ChunkService/WriteChunk"
+	ChunkService_ReadChunk_FullMethodName  = "/proto.ChunkService/ReadChunk"
+	ChunkService_SendChunk_FullMethodName  = "/proto.ChunkService/SendChunk"
 )
 
 // ChunkServiceClient is the client API for ChunkService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Chunk Service for handling chunk operations
 type ChunkServiceClient interface {
 	WriteChunk(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
 	ReadChunk(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
-	SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	SendChunk(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error)
 }
 
@@ -63,16 +63,6 @@ func (c *chunkServiceClient) ReadChunk(ctx context.Context, in *ReadRequest, opt
 	return out, nil
 }
 
-func (c *chunkServiceClient) SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HeartbeatResponse)
-	err := c.cc.Invoke(ctx, ChunkService_SendHeartbeat_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *chunkServiceClient) SendChunk(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReplicationResponse)
@@ -86,10 +76,11 @@ func (c *chunkServiceClient) SendChunk(ctx context.Context, in *ReplicationReque
 // ChunkServiceServer is the server API for ChunkService service.
 // All implementations must embed UnimplementedChunkServiceServer
 // for forward compatibility.
+//
+// Chunk Service for handling chunk operations
 type ChunkServiceServer interface {
 	WriteChunk(context.Context, *WriteRequest) (*WriteResponse, error)
 	ReadChunk(context.Context, *ReadRequest) (*ReadResponse, error)
-	SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	SendChunk(context.Context, *ReplicationRequest) (*ReplicationResponse, error)
 	mustEmbedUnimplementedChunkServiceServer()
 }
@@ -106,9 +97,6 @@ func (UnimplementedChunkServiceServer) WriteChunk(context.Context, *WriteRequest
 }
 func (UnimplementedChunkServiceServer) ReadChunk(context.Context, *ReadRequest) (*ReadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadChunk not implemented")
-}
-func (UnimplementedChunkServiceServer) SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
 }
 func (UnimplementedChunkServiceServer) SendChunk(context.Context, *ReplicationRequest) (*ReplicationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendChunk not implemented")
@@ -170,24 +158,6 @@ func _ChunkService_ReadChunk_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ChunkService_SendHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HeartbeatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ChunkServiceServer).SendHeartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ChunkService_SendHeartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChunkServiceServer).SendHeartbeat(ctx, req.(*HeartbeatRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _ChunkService_SendChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReplicationRequest)
 	if err := dec(in); err != nil {
@@ -220,10 +190,6 @@ var ChunkService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadChunk",
 			Handler:    _ChunkService_ReadChunk_Handler,
-		},
-		{
-			MethodName: "SendHeartbeat",
-			Handler:    _ChunkService_SendHeartbeat_Handler,
 		},
 		{
 			MethodName: "SendChunk",

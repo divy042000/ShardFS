@@ -1,7 +1,18 @@
 version: "3.8"
+
 services:
   master-server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile  # ✅ Master Server Dockerfile
+    container_name: master_server_container
     ports:
-      - "50052:50052"
+      - "50052:50052"  # ✅ Expose Master Server's gRPC port
+    networks:
+      - file_network  # ✅ Shared network for Chunk Servers
     command: ["./masterserver"]
+
+networks:
+  file_network:
+    driver: bridge  # ✅ Ensures Master Server is discoverable
+

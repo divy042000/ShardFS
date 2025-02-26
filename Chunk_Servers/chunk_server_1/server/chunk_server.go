@@ -31,7 +31,7 @@ func NewChunkServer(serverID, storagePath, masterAddress string, workerCount int
 		storagePath:      storagePath,
 		masterAddress:    masterAddress,
 		workerPool:       NewWorkerPool(workerCount, 100), // Worker pool with queue size of 100
-		heartbeatManager: NewHeartbeatManager(serverID, masterAddress, storagePath, 10*time.Second),
+		heartbeatManager: NewHeartbeatManager(serverID, "172.21.0.2172.19.0.2", storagePath, 10*time.Second),
 		chunkTable:       make(map[string][]string),
 	}
 }
@@ -139,4 +139,5 @@ func (cs *ChunkServer) UpdateChunkMetadata(serverID string, chunkIDs []string) {
 
 	log.Printf("📌 Updated metadata: %d chunks stored by server: %s", len(chunkIDs), serverID)
 }
+
 

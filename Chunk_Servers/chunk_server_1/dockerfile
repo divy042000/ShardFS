@@ -1,50 +1,21 @@
-# Step 1: Build Stage - Compiling the gRPC Server
+# Step 1: Build Stage
 FROM golang:1.22 AS builder
-
-# Set working directory inside the container
 WORKDIR /app
-
-# Install gRPC & Protocol Buffers Compiler
-RUN apt-get update && apt-get install -y \
-    protobuf-compiler \
-    apt-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install gRPC Go plugins
+RUN apt-get update && apt-get install -y protobuf-compiler apt-utils && rm -rf /var/lib/apt/lists/*
 RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-
-# Copy go.mod and go.sum for caching dependencies
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Copy the entire project source
 COPY . .
-
-# Verify module dependencies
 RUN go mod tidy
+# Build a static binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o chunkserver .
 
-# Compile the gRPC Chunk Server
-RUN go build -o chunkserver .
-
-# Step 2: Minimal Runtime Image (Using Alpine for Small Size)
+# Step 2: Runtime Stage
 FROM alpine:latest
-
-# Set working directory inside the container
 WORKDIR /app
-
-# Install required dependencies (Alpine is minimal)
 RUN apk --no-cache add ca-certificates
-
-# Copy the built binary from builder stage
 COPY --from=builder /app/chunkserver .
-
-# Ensure the binary has execute permissions
-RUN chmod +x chunkserver
-
-# Expose gRPC port
+RUN chmod +x /app/chunkserver
 EXPOSE 50051
-
-# Run the server
-CMD ["./chunkserver"]
-
+CMD ["/app/chunkserver"]

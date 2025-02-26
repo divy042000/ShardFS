@@ -7,7 +7,7 @@ services:
     ports:
       - "50052:50052"
     networks:
-      - file_network
+      - shared_file_network
     volumes:
       - master_data:/data
     command: ["./masterserver"]
@@ -16,5 +16,5 @@ volumes:
   master_data:
 
 networks:
-  file_network:
-    driver: bridge
+  shared_file_network:
+    external: true

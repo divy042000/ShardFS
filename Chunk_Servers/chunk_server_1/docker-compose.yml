@@ -7,11 +7,11 @@ services:
     ports:
       - "50051:50051"
     networks:
-      - file_network
+      - shared_file_network
     environment:
       - SERVER_ID=chunk1
       - STORAGE_PATH=/data
-      - MASTER_ADDRESS=172.21.0.2:50052  # ✅ Ensure this matches Master Server
+      - MASTER_ADDRESS=master_server_container:50052  # Use container name
     volumes:
       - chunk_data:/data
     command: ["/app/chunkserver"]
@@ -20,5 +20,5 @@ volumes:
   chunk_data:
 
 networks:
-  file_network:
-    driver: bridge
+  shared_file_network:
+    external: true

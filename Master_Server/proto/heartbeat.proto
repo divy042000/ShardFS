@@ -1,21 +1,24 @@
 syntax = "proto3";
-
 package proto;
-
 option go_package = "./";
 
 service HeartbeatService {
-  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc SendHeartbeat (HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 message HeartbeatRequest {
   string server_id = 1;
-  int64 free_space = 2;
-  repeated string stored_chunks = 3;
+  string storage_path = 2;       // Added to match chunk server
+  int64 free_space = 3;          // Shifted to align field numbers
+  float cpu_usage = 4;           // Added
+  float memory_usage = 5;        // Added
+  float network_usage = 6;       // Added
+  float load = 7;               // Added
+  repeated string chunk_ids = 8; // Renamed from stored_chunks for consistency
+  int64 total_space = 9;
 }
 
 message HeartbeatResponse {
   bool success = 1;
   string message = 2;
 }
-

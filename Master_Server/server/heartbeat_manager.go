@@ -13,6 +13,7 @@ import (
 type ChunkServerInfo struct {
 	ServerID      string
 	FreeSpace     int64
+	TotalSpace    int64
 	StoredChunks  []string
 	LastHeartbeat time.Time
 }
@@ -41,12 +42,13 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	hm.chunkServers[req.ServerId] = &ChunkServerInfo{
 		ServerID:      req.ServerId,
 		FreeSpace:     req.FreeSpace,
-		StoredChunks:  req.StoredChunks,
+		TotalSpace:    req.TotalSpace,
+		StoredChunks:  req.ChunkIds,
 		LastHeartbeat: time.Now(),
 	}
-
-	log.Printf("💓 Received heartbeat from %s | Free Space: %d MB | Chunks: %d",
-		req.ServerId, req.FreeSpace, len(req.StoredChunks))
+ 
+       log.Printf("💓 Received heartbeat from %s | Free Space: %d MB Total Space : %d MB| Chunks: %d | CPU: %.2f%%",
+           req.ServerId, req.FreeSpace, req.TotalSpace,len(req.ChunkIds), req.CpuUsage)
 
 	return &pb.HeartbeatResponse{
 		Success: true,

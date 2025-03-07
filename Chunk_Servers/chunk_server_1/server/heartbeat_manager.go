@@ -81,6 +81,7 @@ func (hm *HeartbeatManager) sendHeartbeat() {
 
 	// Fetch system metrics
 	freeSpace := int64(utils.GetFreeDiskSpace(hm.storagePath))
+	totalSpace := int64(utils.GetTotalDiskSpace(hm.storagePath))
 	cpuUsage := utils.GetCPUUsage()
 	memoryUsage := utils.GetMemoryUsage()
 	networkUsage := utils.GetNetworkUsage()
@@ -109,7 +110,7 @@ func (hm *HeartbeatManager) sendHeartbeat() {
 		hm.connectToMaster() // Reconnect if connection is lost
 	} else {
 		log.Printf("💓 Heartbeat sent: Server %s | CPU: %.2f%% | Memory: %.2f%% | Disk: %dMB | Load: %.2f | Chunks: %d",
-			hm.serverID, cpuUsage, memoryUsage, freeSpace, load, len(chunkIDs))
+			hm.serverID, cpuUsage, memoryUsage, freeSpace, totalSpace,load, len(chunkIDs))
 	}
 }
 

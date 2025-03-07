@@ -26,6 +26,17 @@ func GetFreeDiskSpace(storagePath string) int64 {
         return int64 ((stat.Bavail * uint64(stat.Bsize)) / (1024 * 1024))
 }
 
+func GetTotalDiskSpace(storagePath string) int64{
+        var stat syscall.Statfs_t
+        err := syscall.Statfs(storagePath,&stat)
+        if err != nil{
+        log.Printf("⚠️ Error retrieving disk space: %v",err)
+        return -1
+        }
+        return int64((stat.Blocks*uint64(stat.Bsize))/(1024*1024))
+}
+
+
 // GetCPUUsage returns the CPU usage percentage
 func GetCPUUsage() float64 {
 	percentages, err := cpu.Percent(time.Second, false)

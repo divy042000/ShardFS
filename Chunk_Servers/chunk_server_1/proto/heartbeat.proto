@@ -19,6 +19,7 @@ message HeartbeatRequest {
   float network_usage = 6;    // Network bandwidth usage
   float load = 7;             // System load average
   repeated string chunk_ids = 8; // List of stored chunks
+  int64 total_space = 9;
 }
 
 // Heartbeat Response from Master Server to Chunk Server

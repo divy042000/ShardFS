@@ -9,8 +9,17 @@ import "heartbeat.proto";
 // Master Service
 service MasterService {
   rpc GetChunkLocations(GetChunkRequest) returns (GetChunkResponse);
+ 
   rpc ReportChunk(ChunkReport) returns (ChunkResponse);
- rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Receives heartbeat from chunkservers
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Client registers a new file and gets chunk server assignments
+  rpc RegisterFile(RegisterFileRequest) returns (RegisterFileResponse);
+  
+  // Client retrieves metadata for an existing file
+  rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
 }
 
 
@@ -30,6 +39,31 @@ message GetChunkResponse {
 }
 
 
+message RegisterFileRequest {
+  string file_name = 1;
+  string file_format = 2;
+  int64 total_size = 3;
+  int32 chunk_count = 4;
+  repeated int64 chunk_sizes = 5;
+  repeated string chunk_hashes = 6;
+  int64 timestamp = 7;
+  string client_id = 8;
+  int32 priority = 9;
+  int32 redundancy_level = 10;
+  bool compression_used = 11;
+}
+
+
+message RegisterFileResponse {
+  string file_id = 1;
+  string leader_server = 2; // Primary chunk server endpoint
+  map<int32, string> chunk_assignments = 3; // Chunk index -> primary chunk server endpoint
+  map<int32, repeated string> replication_map = 4; // Chunk index -> list of replica servers
+  bool success = 5;
+  string message = 6;
+}
+
+
 // Chunk Server reporting new chunk
 message ChunkReport {
   string chunk_id = 1;
@@ -43,3 +77,14 @@ message ChunkResponse {
   string message = 2;
 }
 
+message GetFileMetadataRequest {
+  string file_name = 1;
+}
+
+message GetFileMetadataResponse {
+  string file_id = 1;
+  int32 chunk_count = 2;
+  repeated string chunk_hashes = 3;
+  bool success = 4;
+  string message = 5;
+}

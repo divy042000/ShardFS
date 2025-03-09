@@ -2,64 +2,9 @@ syntax = "proto3";
 package proto;
 option go_package = "./";
 
-service MasterService {
-// client requests chunk locations for reading a file 
-rpc GetChunkLocations(GetChunkRequest) returns (GetChunkResponse);
-// client registers a new file and gets chunk server assignments
-rpc RegisterFile(RegisterFileRequest) returns (RegisterFileResponse);
-}
-
 service HeartbeatService {
   rpc SendHeartbeat (HeartbeatRequest) returns (HeartbeatResponse);
 }
-
-service ChunkService{
-// Client uploads a chunk to a chunk server
-rpc UploadChunk(stream ChunkData) returns (ChunkResponse);
-//Client downloads a chunk to a chunk server
-rpc DownloadChunk(ChunkRequest) returns (stream ChunkData);
-}
-
-// messages for master server
-
-message GetChunkRequest
-{
- string file_name = 1;
- int32 chunk_index = 2;
-}
-
-message GetChunkResponse{
- string chunk_id = 1;
- repeated string chunk_servers = 2;
- bool success = 3;
- string message = 4;
-}
-
-message RegisterFileRequest
-{
- string file_name = 1;
- string file_format = 2;
- int64 total_size = 3;
- int32 chunk_count = 4;
- repeated int64 chunk_sizes = 5;
- repeated string chunk_hashes = 6;
- int64 timestamp = 7;
- string client_id = 8;
- int32 priority = 9;
- int32 redundency_level = 10;
- bool compression_used = 11; 
-}
-
-message RegisterFileResponse
-{
- string file_id = 1;
- string leader_server = 2;
- map<int32,string> chunk_assignments = 3;
- map<int32,repeated string> replication_map = 4; // list of replica servers
- bool success = 5;
- string message =6;
-}
-
 
 message HeartbeatRequest {
   string server_id = 1;
@@ -78,16 +23,3 @@ message HeartbeatResponse {
   string message = 2;
 }
 
-message ChunkData{
-  string chunk_id = 1;
-  bytes data = 2;
-}
-
-message ChunkRequest{
-  string chunk_id = 1;
-}
-
-message ChunkResponse{
-  bool success = 1;
-  string message = 2;
-}

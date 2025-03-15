@@ -1,0 +1,19 @@
+version: "3.8"
+services:
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gfs_client_container
+    networks:
+      - shared_file_network
+    environment:
+      - MASTER_ADDRESS=master_server_container:50052
+    volumes:
+      - ./data:/data
+    tty: true          # Allocate a TTY for interactive input
+    stdin_open: true   # Keep stdin open
+    command: ["/app/gfs-client"]
+networks:
+  shared_file_network:
+    external: true

@@ -21,18 +21,16 @@ type Client struct {
 
 // NewClient initializes a new gRPC client
 func NewClient(masterAddr string) (*Client, error) {
-	// Establish a connection to the master server
-	conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	fmt.Printf("Connecting to master server at %s\n", masterAddr)
+	conn,err := grpc.NewClient(masterAddr,grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to master: %v", err)
+		return nil, fmt.Errorf("failed to connect to master server: %v", err)
 	}
-
-	return &Client{
+	return &Client{	
 		masterConn: conn,
 		master:     pb.NewMasterServiceClient(conn),
 	}, nil
 }
-
 // Close closes the gRPC connection
 func (c *Client) Close() {
 	c.masterConn.Close()
@@ -40,7 +38,9 @@ func (c *Client) Close() {
 
 // RegisterFile registers a file with the master server
 func (c *Client) RegisterFile(ctx context.Context, req *pb.RegisterFileRequest) (*pb.RegisterFileResponse, error) {
+	fmt.Printf("Registering file %s with master\n", req.FileName)
 	resp, err := c.master.RegisterFile(ctx, req)
+	fmt.Println("Registering approach")
 	if err != nil {
 		return nil, fmt.Errorf("failed to register file: %v", err)
 	}

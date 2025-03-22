@@ -57,12 +57,21 @@ message RegisterFileRequest {
 message RegisterFileResponse {
   string file_id = 1;
   string leader_server = 2; // Primary chunk server endpoint
-  map<int32, string> chunk_assignments = 3; // Chunk index -> primary chunk server endpoint
-  map<int32, repeated string> replication_map = 4; // Chunk index -> list of replica servers
+  map<int32, ChunkServers> chunk_assignments = 3; // Chunk index -> primary chunk server endpoints
+  map<int32, ReplicaServers> replication_map = 4; // Chunk index -> list of replica servers
   bool success = 5;
   string message = 6;
 }
 
+
+
+message ChunkServers {
+  repeated string servers = 1;
+}
+
+message ReplicaServers {
+  repeated string servers = 1;
+}
 
 // Chunk Server reporting new chunk
 message ChunkReport {

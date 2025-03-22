@@ -25,10 +25,17 @@ var writeCmd = &cobra.Command{
 			log.Printf("Failed to stat file: %v", err)
 			return
 		}
-		masterAddr, _ := cmd.Flags().GetString("master")
-		clientID := "client-123" // Hardcoded for now
+		
+		clientID := "gfs-client"
+		masterAddr, _ := cmd.Flags().GetString("master") // Get flag first
+		if envAddr := os.Getenv("MASTER_ADDRESS"); envAddr != "" {
+			masterAddr = envAddr // Override with env if set
+		}
+		if masterAddr == "" || masterAddr == "localhost:50052" { // Avoid localhost default
+			masterAddr = "master_server_container:50052" // Hardcode as last resort
+		}
 
-		// Initialize gRPC client
+		log.Printf("Master address: %s", masterAddr)
 		cl, err := client.NewClient(masterAddr)
 		if err != nil {
 			log.Printf("Failed to initialize client: %v", err)

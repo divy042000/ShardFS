@@ -18,6 +18,7 @@ func Execute() {
 }
 
 func init() {
+
 	// Persistent Flags for master server address
-	rootCmd.PersistentFlags().StringP("master", "m", "localhost:50052", "Master server gRPC address")
+     	rootCmd.PersistentFlags().StringP("master", "m", "localhost:50052", "Master server gRPC address")
 }

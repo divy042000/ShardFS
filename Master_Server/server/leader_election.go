@@ -1,13 +1,12 @@
 package server
 
-import "master_server/heartbeat_manager"
 
 type LeaderElector struct {
-	    
+hm *HeartbeatManager      // ✅ HeartbeatManager Dependency	    
 }
 
-func NewLeaderElector() *LeaderElector {
-	return &LeaderElector{}
+func NewLeaderElector(hm *HeartbeatManager) *LeaderElector {
+	return &LeaderElector{hm:hm}
 }
 
 func (le *LeaderElector) ElectLeader(totalSize int64, chunkCount int32, servers []string, loads map[string]int64, spaces map[string]int64) string {
@@ -22,18 +21,7 @@ func (le *LeaderElector) ElectLeader(totalSize int64, chunkCount int32, servers 
 
 	computePower := make(map[string]float64)
 	maxComputePower := float64(0)
-	for _, server := range servers {
-		computePower[server] = 100.0
-		if info, exits := heartbeatManager.chunkServers[server]; exists {
-			computePower[server] = 100.0
-			if info, exists := heartbeatManager.chunkServers[server]; exists {
-				computePower[server] = 100.0 - info.CpuUsage // Lower CPU usage is better
-			}
-		}
-		if computePower[server] > maxComputePower {
-			maxComputePower = computePower[server]
-		}
-	}
+	
 	if maxComputePower == 0 {
 		maxComputePower = 1
 	}

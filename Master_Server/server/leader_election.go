@@ -18,34 +18,22 @@ func (le *LeaderElector) ElectLeader(totalSize int64, chunkCount int32, servers 
 	if chunkSize < 64*1024*1024 {
 		chunkSize = 64 * 1024 * 1024
 	}
+    
+    le.hm.mu.Lock()
+	defer le.hm.mu.Unlock()
+     
+    // check top servers from priority queue
 
-	computePower := make(map[string]float64)
-	maxComputePower := float64(0)
-	
-	if maxComputePower == 0 {
-		maxComputePower = 1
+	for _, item := range le.hm.pq {
+    server := item.ServerID
+	available := item.FreeSpace
+	if available >= chunkSize {
+        for _, s := range servers{
+			if s == server && le.hm.chunkServers[server] != nil{
+				return server
+			}
+		}
 	}
-
-	bestServer := ""
-	bestScore := float64(-1)
-	for _, server := range servers {
-      available := spaces[server] - loads[server]
-	  if available < chunkSize {
-		  continue
-	  }
-
-	  spaceScore := float64(available-chunkSize) / float64(spaces[server])
-	  if spaceScore < 0 {
-		  spaceScore = 0
-	  }
-
-	  computeScore := computePower[server] / maxComputePower
-	  score := 0.6*spaceScore + 0.4*computeScore
-
-	  if score > bestScore {
-		  bestScore = score
-		  bestServer = server
-	  }
 	}
-	return bestServer
+	return ""  // No suitable server found
 }

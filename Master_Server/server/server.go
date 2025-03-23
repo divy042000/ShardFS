@@ -4,18 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image/jpeg"
 	pb "master_server/proto"
 	"os"
 	"path/filepath"
 	"sync"
 
-	"golang.org/x/exp/rand"
 )
 
 type masterServer struct {
 	pb.UnimplementedMasterServiceServer
 	chunkServers []string         // address of chunk servers
+    mu sync.Mutex
+
 	le           *LeaderElector   // Modular Leader Election
 	rs           *ReplicaSelector // Modular Replica Selection
 
@@ -24,20 +24,26 @@ type masterServer struct {
 		sync.RWMutex
 		m map[string]int64
 	} // space used
+
 	serverSpaces struct {
 		sync.RWMutex
 		m map[string]int64
 	} // total space
+
 	// fileID -> FileMetadata
 	fileMetadata struct {
 		sync.RWMutex
 		m map[string]*pb.RegisterFileRequest
 	}
+
+
 	// chunkID -> ChunkPacket
 	chunkPackets struct {
 		sync.RWMutex
 		m map[string][]ChunkPacket
 	}
+
+
 	// clientID_fileName -> fileID
 	clientFileMap struct {
 		sync.RWMutex
@@ -47,10 +53,13 @@ type masterServer struct {
 }
 
 func (s *masterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileRequest) (*pb.RegisterFileResponse, error) {
+    s.mu.lock()
+    defer s.mu.Unlock()
+
 	// Step 1 : Create Mapping
 	clientFileKey := fmt.Sprintf("%s_%s", req.ClientId, req.FileName)
 	fileID := fmt.Sprintf("file_%s_%d", clientFileKey, req.Timestamp)
-
+    
 	s.clientFileMap.Lock()
 	// Check if file already exists with the same name
 	if existingID, exists := s.clientFileMap.m[clientFileKey]; exists {
@@ -70,11 +79,11 @@ func (s *masterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileReq
 	replicationMap := make(map[int32][]string)
 	var packets []ChunkPacket
 
-	maxChunks := int(s.serverSpaces.m[req.LeaderServer] / (64 * 1024 * 1024))
+	// maxChunks := int(s.serverSpaces.m[req.LeaderServer] / (64 * 1024 * 1024))
+
+
 	s.serverLoads.Lock()
 	s.serverSpaces.RLock()
-	remainingSize := req.TotalSize
-	remainingChunks := req.ChunkCount
 	s.serverLoads.Lock()
 	s.serverSpaces.RLock()
 	remainingSize := req.TotalSize
@@ -83,24 +92,19 @@ func (s *masterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileReq
 		// Elect leader for remaining chunks
 		leader := s.le.ElectLeader(remainingSize, remainingChunks, s.chunkServers, s.serverLoads.m, s.serverSpaces.m)
 		if leader == "" {
-			s.serverLoads.Unlock()
-			s.serverSpaces.RUnlock()
 			return nil, fmt.Errorf("no suitable leader found at chunk %d", i)
 		}
 
 		// Calculate max chunks this leader can handle
 		maxChunks := int(s.serverSpaces.m[leader] / (64 * 1024 * 1024)) // 64MB chunks
+
 		if maxChunks == 0 {
 			leader = s.le.ElectLeader(remainingSize, remainingChunks, s.chunkServers, s.serverLoads.m, s.serverSpaces.m)
 			if leader == "" {
-				s.serverLoads.Unlock()
-				s.serverSpaces.RUnlock()
 				return nil, fmt.Errorf("no leader with enough space at chunk %d", i)
 			}
 			maxChunks = int(s.serverSpaces.m[leader] / (64 * 1024 * 1024))
 			if maxChunks == 0 {
-				s.serverLoads.Unlock()
-				s.serverSpaces.RUnlock()
 				return nil, fmt.Errorf("no server with sufficient space at chunk %d", i)
 			}
 		}
@@ -146,7 +150,43 @@ func (s *masterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileReq
 		}
 		i += int32(chunksToAssign) // Move index forward
 	}
-	s.serverLoads.Unlock()
-	s.serverSpaces.RUnlock()
+    // Step 4 : Store Chunk Packets
+	s.chunkPackets.Lock()
+	s.chunkPackets.m[fileID] = packets
+	s.chunkPackets.Unlock()
 
+	// Step 5 : Serialize to Disk
+    data := struct {
+		Metadata *pb.RegisterFileRequest
+		Packets []ChunkPacket
+	}{
+		Metadata: req,
+		Packets: packets,
+	}
+    bytes, err := json.Marshal(data)
+	if err != nil{
+		return nil, fmt.Errorf("failed to marshal data: %v",err)
+	}
+	if err := os.WriteFile(filepath.Join(s.storageDir, fileID+".json"),bytes,0644); err!=nil {
+		return nil, fmt.Errorf("failed to write to disk %v", err)
+	}
+
+	// Step 6: Return Response
+    return &pb.RegisterFileResponse{
+		FileId: fileID,
+		LeaderServer: chunkAssignments[0].Servers[0],
+		chunkAssignments: chunkAssignments,
+		replicationMap: convertReplicationMap(replicationMap),
+		Success: true,
+		Message: "File registered successfully",
+	}, nil
+
+	// Helper to convert replicationMap to proto format
+    func convertReplicationMap(m map[int32][]string) map[int32]*pb.ReplicaServers {
+		result := make(map[int32]*pb.ReplicaServers)
+		for k, v := range m {
+			result[k] = &pb.ReplicaServers{Servers: v}
+		}
+		return result
+	}
 }

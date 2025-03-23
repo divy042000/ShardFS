@@ -16,13 +16,16 @@ type MasterServer struct {
 	mu               sync.Mutex
 	chunkTable       map[string][]string // Mapping chunk_id → chunk servers
 	heartbeatManager *HeartbeatManager   // ✅ Manages active chunk servers
+	le *LeaderElector
 }
 
 // NewMasterServer initializes the Master Server
 func NewMasterServer() *MasterServer {
+	hm := NewHeartbeatManager()
 	return &MasterServer{
-		chunkTable:       make(map[string][]string),
-		heartbeatManager: NewHeartbeatManager(), // ✅ Initialize HeartbeatManager
+		chunkTable:       make(map[string][]string), // file1_chunks : [server1 , server2] mapping of chunks with their locations.
+		heartbeatManager: hm, // ✅ Initialize HeartbeatManager
+		le: NewLeaderElector(hm),
 	}
 }
 

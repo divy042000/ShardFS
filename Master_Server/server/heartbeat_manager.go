@@ -119,9 +119,29 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	for i,item := range hm.pq {
 		if item.ServerID == req.ServerId{
 			hm.pq[i].Score = score
-			
+			hm.pq[i].FreeSpace = req.FreeSpace
+			hm.pq[i].CPUUsage = req.CpuUsage
+			hm.pq[i].MemoryUsage = req.MemoryUsage
+			hm.pq[i].NetworkUsage = req.NetworkUsage
+			hm.pq[i].Load = req.Load
+			heap.Fix(&hm.pq,i) // Re-heapify after updating
+			found = true
+			break
 		}
 	}
+
+	if !found {
+    heap.Push(&hm.pq, &ServerScore{
+		ServerID:   req.ServerId,
+		Score:      score,
+		FreeSpace: req.FreeSpace,
+		CPUUsage: req.CpuUsage,
+		MemoryUsage: req.MemoryUsage,
+		NetworkUsage: req.NetworkUsage,
+		Load : req.Load,
+	})
+}
+
        log.Printf("💓 Received heartbeat from %s | Free Space: %d MB Total Space : %d MB| Chunks: %d | CPU: %.2f%%",
            req.ServerId, req.FreeSpace, req.TotalSpace,len(req.ChunkIds), req.CpuUsage)
 
@@ -131,6 +151,22 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	}, nil
 }
 
+// calculate score computes a score comprising of available metric score out of heartbeat
+
+func calculateScore(info *ChunkServerInfo) float64 {
+	spaceScore := float64(info.FreeSpace) / float64(info.TotalSpace)
+	computeScore := (100.0 - float64(info.CPUUsage)) / 100.0
+	memoryScore := (100.0 -float64(info.MemoryUsage)) / 100.0
+	networkScore := (100.0 -float64(info.NetworkUsage)) / 100.0
+	loadScore := 1.0
+	if info.Load > 0 {
+		loadScore = 1.0 / float64(info.Load) // Higher load means lower score
+		if loadScore > 1.0 {
+           loadScore = 1.0
+		}
+	}
+	return 0.4 * spaceScore + 0.25 * computeScore + 0.15 * memoryScore + 0.10 * networkScore + 0.10 * loadScore
+}
 // RemoveInactiveServers clears out inactive Chunk Servers (no heartbeat in 30s)
 func (hm *HeartbeatManager) RemoveInactiveServers() {
 	for {

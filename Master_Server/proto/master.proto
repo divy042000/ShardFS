@@ -20,7 +20,23 @@ service MasterService {
   
   // Client retrieves metadata for an existing file
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
+
+  // Registering chunk servers in master pool of servers
+  rpc RegisterChunkServer (RegisterRequest) returns (RegisterResponse);
 }
+
+
+// RegisterRequest
+message RegisterRequest{
+  string server_id = 1;
+  string address = 2;
+}
+// Register Response
+message RegisterResponse{
+  bool success = 1;
+  string message = 2;
+}
+
 
 
 

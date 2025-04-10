@@ -2,14 +2,14 @@ package main
 
 import (
 	"log"
-	"master_server/server"
+	"master_server/server" 
 )
 
+
 func main() {
-	log.Println("🚀 Starting Master Server...")
+	ms := server.NewMasterServer("./storage") // Only storageDir needed
+	go ms.Start()
 
-	// Initialize and start the Master Server (which includes HeartbeatManager)
-	master := server.NewMasterServer()
-	master.Start()
+	log.Println("Master Server started")
+	select {} // Keep main running
 }
-

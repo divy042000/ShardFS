@@ -1,192 +1,176 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	pb "master_server/proto"
 	"os"
 	"path/filepath"
 	"sync"
 
+	pb "master_server/proto"
 )
 
-type masterServer struct {
-	pb.UnimplementedMasterServiceServer
-	chunkServers []string         // address of chunk servers
-    mu sync.Mutex
+// ChunkPacket represents metadata for a single chunk
+type ChunkPacket struct {
+	ChunkName        string   // e.g., "file_client1_test.txt_123456_0"
+	LeaderAddress    string   // e.g., "chunk1:50051"
+	ReplicaAddresses []string // e.g., ["chunk2:50051", "chunk3:50051"]
+	FileID           string   // e.g., "file_client1_test.txt_123456"
+	ChunkIndex       int32    // e.g., 0
+	ChunkSize        int64    // e.g., 64000000 (bytes)
+	ChunkHash        string   // e.g., "hash1"
+}
 
-	le           *LeaderElector   // Modular Leader Election
-	rs           *ReplicaSelector // Modular Replica Selection
+// NewChunkPacket creates a new ChunkPacket
+func NewChunkPacket(fileID string, chunkIndex int32, leader string, replicas []string, req *pb.RegisterFileRequest) ChunkPacket {
+	return ChunkPacket{
+		ChunkName:        fmt.Sprintf("%s_%d", fileID, chunkIndex),
+		LeaderAddress:    leader,
+		ReplicaAddresses: replicas,
+		FileID:           fileID,
+		ChunkIndex:       chunkIndex,
+		ChunkSize:        req.ChunkSizes[chunkIndex],
+		ChunkHash:        req.ChunkHashes[chunkIndex],
+	}
+}
 
-	// Granular Locking for each data structure
+// ToProtoChunkServers converts to proto format
+func (cp ChunkPacket) ToProtoChunkServers() *pb.ChunkServers {
+	return &pb.ChunkServers{Servers: []string{cp.LeaderAddress}}
+}
+
+// ToProtoReplicaServers returns replica addresses
+func (cp ChunkPacket) ToProtoReplicaServers() []string {
+	return cp.ReplicaAddresses
+}
+
+// ReplicaSelector handles replica server selection
+type ReplicaSelector struct{}
+
+// NewReplicaSelector creates a new ReplicaSelector instance
+func NewReplicaSelector() *ReplicaSelector {
+	return &ReplicaSelector{}
+}
+
+// SelectReplicas selects 'count' replica servers excluding the leader
+func (rs *ReplicaSelector) SelectReplicas(leader string, count int, servers []string) []string {
+	replicas := make([]string, 0, count)
+	for _, server := range servers {
+		if server != leader && len(replicas) < count {
+			replicas = append(replicas, server)
+		}
+	}
+	return replicas
+}
+
+// DataManager manages server and file metadata
+type DataManager struct {
+	mu           sync.Mutex // Added for thread safety of chunkServers
+	chunkServers []string
 	serverLoads struct {
 		sync.RWMutex
 		m map[string]int64
-	} // space used
-
+	}
 	serverSpaces struct {
 		sync.RWMutex
 		m map[string]int64
-	} // total space
-
-	// fileID -> FileMetadata
+	}
 	fileMetadata struct {
 		sync.RWMutex
 		m map[string]*pb.RegisterFileRequest
 	}
-
-
-	// chunkID -> ChunkPacket
-	chunkPackets struct {
-		sync.RWMutex
-		m map[string][]ChunkPacket
-	}
-
-
-	// clientID_fileName -> fileID
 	clientFileMap struct {
 		sync.RWMutex
 		m map[string]string
 	}
-	storageDir string // Directory for serialized data
 }
 
-func (s *masterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileRequest) (*pb.RegisterFileResponse, error) {
-    s.mu.lock()
-    defer s.mu.Unlock()
+// NewDataManager initializes a DataManager
+func NewDataManager(chunkServers []string) *DataManager {
+	dm := &DataManager{
+		mu:           sync.Mutex{}, // Initialize the mutex
+		chunkServers: chunkServers,
+	}
+	dm.serverLoads.m = make(map[string]int64)
+	dm.serverSpaces.m = make(map[string]int64)
+	dm.fileMetadata.m = make(map[string]*pb.RegisterFileRequest)
+	dm.clientFileMap.m = make(map[string]string)
+	return dm
+}
 
-	// Step 1 : Create Mapping
+// RegisterFile registers a file and returns its ID
+func (dm *DataManager) RegisterFile(req *pb.RegisterFileRequest) (string, error) {
 	clientFileKey := fmt.Sprintf("%s_%s", req.ClientId, req.FileName)
 	fileID := fmt.Sprintf("file_%s_%d", clientFileKey, req.Timestamp)
-    
-	s.clientFileMap.Lock()
-	// Check if file already exists with the same name
-	if existingID, exists := s.clientFileMap.m[clientFileKey]; exists {
-		s.clientFileMap.Unlock()
-		return nil, fmt.Errorf("file already exists with ID %s", existingID)
+
+	dm.clientFileMap.Lock()
+	if existingID, exists := dm.clientFileMap.m[clientFileKey]; exists {
+		dm.clientFileMap.Unlock()
+		return "", fmt.Errorf("file already exists with ID %s", existingID)
 	}
-	s.clientFileMap.m[clientFileKey] = fileID
-	s.clientFileMap.Unlock()
+	dm.clientFileMap.m[clientFileKey] = fileID
+	dm.clientFileMap.Unlock()
 
-	// Step 2 : Store Metadata
-	s.fileMetadata.Lock()
-	s.fileMetadata.m[fileID] = req
-	s.fileMetadata.Unlock()
+	dm.fileMetadata.Lock()
+	dm.fileMetadata.m[fileID] = req
+	dm.fileMetadata.Unlock()
 
-	// Step 3 : Elect Leader and Assign Chunks
-	chunkAssignments := make(map[int32]*pb.ChunkServers)
-	replicationMap := make(map[int32][]string)
-	var packets []ChunkPacket
+	return fileID, nil
+}
 
-	// maxChunks := int(s.serverSpaces.m[req.LeaderServer] / (64 * 1024 * 1024))
-
-
-	s.serverLoads.Lock()
-	s.serverSpaces.RLock()
-	s.serverLoads.Lock()
-	s.serverSpaces.RLock()
-	remainingSize := req.TotalSize
-	remainingChunks := req.ChunkCount
-	for i := int32(0); i < req.ChunkCount; {
-		// Elect leader for remaining chunks
-		leader := s.le.ElectLeader(remainingSize, remainingChunks, s.chunkServers, s.serverLoads.m, s.serverSpaces.m)
-		if leader == "" {
-			return nil, fmt.Errorf("no suitable leader found at chunk %d", i)
-		}
-
-		// Calculate max chunks this leader can handle
-		maxChunks := int(s.serverSpaces.m[leader] / (64 * 1024 * 1024)) // 64MB chunks
-
-		if maxChunks == 0 {
-			leader = s.le.ElectLeader(remainingSize, remainingChunks, s.chunkServers, s.serverLoads.m, s.serverSpaces.m)
-			if leader == "" {
-				return nil, fmt.Errorf("no leader with enough space at chunk %d", i)
-			}
-			maxChunks = int(s.serverSpaces.m[leader] / (64 * 1024 * 1024))
-			if maxChunks == 0 {
-				return nil, fmt.Errorf("no server with sufficient space at chunk %d", i)
-			}
-		}
-
-		// Determine chunks to assign (min of maxChunks or remainingChunks)
-		chunksToAssign := maxChunks
-		if int32(chunksToAssign) > remainingChunks {
-			chunksToAssign = int(remainingChunks)
-		}
-
-		// Assign replicas once per batch
-		replicas := s.rs.SelectReplicas(leader, 2, s.chunkServers)
-		if len(replicas) < 2 {
-			s.serverLoads.Unlock()
-			s.serverSpaces.RUnlock()
-			return nil, fmt.Errorf("not enough replica servers for chunk %d", i)
-		}
-
-		// Assign chunks in this batch
-		for j := int32(0); j < int32(chunksToAssign); j++ {
-			chunkIndex := i + j
-			packet := ChunkPacket{
-				ChunkName:        fmt.Sprintf("%s_%d", fileID, chunkIndex),
-				LeaderAddress:    leader,
-				ReplicaAddresses: replicas,
-				FileID:           fileID,
-				ChunkIndex:       chunkIndex,
-				ChunkSize:        req.ChunkSizes[chunkIndex],
-				ChunkHash:        req.ChunkHashes[chunkIndex],
-			}
-			packets = append(packets, packet)
-			chunkAssignments[chunkIndex] = packet.ToProtoChunkServers()
-			replicationMap[chunkIndex] = packet.ToProtoReplicaServers()
-
-			s.serverLoads.m[leader] += req.ChunkSizes[chunkIndex]
-		}
-
-		// Update remaining counts
-		remainingChunks -= int32(chunksToAssign)
-		remainingSize -= req.TotalSize / int64(req.ChunkCount) * int64(chunksToAssign)
-		if remainingChunks <= 0 {
-			break
-		}
-		i += int32(chunksToAssign) // Move index forward
+// MaxChunksForServer calculates max chunks a server can handle
+func (dm *DataManager) MaxChunksForServer(server string) int {
+	dm.serverSpaces.RLock()
+	defer dm.serverSpaces.RUnlock()
+	space := dm.serverSpaces.m[server]
+	if space == 0 {
+		return 0 // Avoid division by zero
 	}
-    // Step 4 : Store Chunk Packets
-	s.chunkPackets.Lock()
-	s.chunkPackets.m[fileID] = packets
-	s.chunkPackets.Unlock()
+	return int(space / (64 * 1024 * 1024)) // 64MB chunks
+}
 
-	// Step 5 : Serialize to Disk
-    data := struct {
+// UpdateLoad updates the load for a server
+func (dm *DataManager) UpdateLoad(server string, size int64) {
+	dm.serverLoads.Lock()
+	defer dm.serverLoads.Unlock()
+	dm.serverLoads.m[server] += size
+}
+
+// ChunkManager handles chunk storage and persistence
+type ChunkManager struct {
+	storageDir   string
+	chunkPackets struct {
+		sync.RWMutex
+		m map[string][]ChunkPacket
+	}
+}
+
+// NewChunkManager initializes a ChunkManager
+func NewChunkManager(storageDir string) *ChunkManager {
+	cm := &ChunkManager{storageDir: storageDir}
+	cm.chunkPackets.m = make(map[string][]ChunkPacket)
+	return cm
+}
+
+// StoreAndSerialize saves chunks and persists to disk
+func (cm *ChunkManager) StoreAndSerialize(fileID string, req *pb.RegisterFileRequest, packets []ChunkPacket) error {
+	cm.chunkPackets.Lock()
+	cm.chunkPackets.m[fileID] = packets
+	cm.chunkPackets.Unlock()
+
+	data := struct {
 		Metadata *pb.RegisterFileRequest
-		Packets []ChunkPacket
+		Packets  []ChunkPacket
 	}{
 		Metadata: req,
-		Packets: packets,
+		Packets:  packets,
 	}
-    bytes, err := json.Marshal(data)
-	if err != nil{
-		return nil, fmt.Errorf("failed to marshal data: %v",err)
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(s.storageDir, fileID+".json"),bytes,0644); err!=nil {
-		return nil, fmt.Errorf("failed to write to disk %v", err)
+	if err := os.WriteFile(filepath.Join(cm.storageDir, fileID+".json"), bytes, 0644); err != nil {
+		return fmt.Errorf("failed to write to disk: %v", err)
 	}
-
-	// Step 6: Return Response
-    return &pb.RegisterFileResponse{
-		FileId: fileID,
-		LeaderServer: chunkAssignments[0].Servers[0],
-		chunkAssignments: chunkAssignments,
-		replicationMap: convertReplicationMap(replicationMap),
-		Success: true,
-		Message: "File registered successfully",
-	}, nil
-
-	// Helper to convert replicationMap to proto format
-    func convertReplicationMap(m map[int32][]string) map[int32]*pb.ReplicaServers {
-		result := make(map[int32]*pb.ReplicaServers)
-		for k, v := range m {
-			result[k] = &pb.ReplicaServers{Servers: v}
-		}
-		return result
-	}
+	return nil
 }

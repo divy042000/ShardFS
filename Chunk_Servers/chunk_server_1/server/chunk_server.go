@@ -9,18 +9,19 @@ import (
 
 	pb "chunk_server_1/proto"
 	"chunk_server_1/storage"
+
 	"google.golang.org/grpc"
 )
 
 // ChunkServer represents a single chunk server
 type ChunkServer struct {
-	mu              sync.Mutex
-	serverID        string
-	storagePath     string
-	masterAddress   string
-	workerPool      *WorkerPool
+	mu               sync.Mutex
+	serverID         string
+	storagePath      string
+	masterAddress    string
+	workerPool       *WorkerPool
 	heartbeatManager *HeartbeatManager
-	chunkTable      map[string][]string
+	chunkTable       map[string][]string
 	pb.UnimplementedChunkServiceServer
 }
 
@@ -139,5 +140,3 @@ func (cs *ChunkServer) UpdateChunkMetadata(serverID string, chunkIDs []string) {
 
 	log.Printf("📌 Updated metadata: %d chunks stored by server: %s", len(chunkIDs), serverID)
 }
-
-

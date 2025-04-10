@@ -49,17 +49,21 @@ func NewHeartbeatManager(serverID, masterAddress, storagePath string, interval t
 
 // connectToMaster establishes a persistent gRPC connection to Master Server
 func (hm *HeartbeatManager) connectToMaster() {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Increased timeout
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, hm.masterAddress, grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("❌ Failed to connect to Master Server: %v", err)
+	for{
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+	
+		conn, err := grpc.DialContext(ctx, hm.masterAddress, grpc.WithInsecure(), grpc.WithBlock())
+		if err != nil {
+			log.Fatalf("❌ Failed to connect to Master Server: %v", err)
+		}
+	
+		hm.conn = conn
+		hm.client = pb.NewHeartbeatServiceClient(conn)
+		log.Println("✅ Connected to Master Server for Heartbeats")
 	}
-
-	hm.conn = conn
-	hm.client = pb.NewHeartbeatServiceClient(conn)
-	log.Println("✅ Connected to Master Server for Heartbeats")
+	log.Printf("⚠️ Failed to connect to Master Server (%s): %v, retrying in 5s...", hm.masterAddress, err)
+    time.Sleep(5 * time.Second)
 }
 
 // StartHeartbeat sends heartbeats to Master Server at regular intervals

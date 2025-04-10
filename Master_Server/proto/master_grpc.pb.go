@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MasterService_GetChunkLocations_FullMethodName = "/proto.MasterService/GetChunkLocations"
-	MasterService_ReportChunk_FullMethodName       = "/proto.MasterService/ReportChunk"
-	MasterService_SendHeartbeat_FullMethodName     = "/proto.MasterService/SendHeartbeat"
-	MasterService_RegisterFile_FullMethodName      = "/proto.MasterService/RegisterFile"
-	MasterService_GetFileMetadata_FullMethodName   = "/proto.MasterService/GetFileMetadata"
+	MasterService_GetChunkLocations_FullMethodName   = "/proto.MasterService/GetChunkLocations"
+	MasterService_ReportChunk_FullMethodName         = "/proto.MasterService/ReportChunk"
+	MasterService_SendHeartbeat_FullMethodName       = "/proto.MasterService/SendHeartbeat"
+	MasterService_RegisterFile_FullMethodName        = "/proto.MasterService/RegisterFile"
+	MasterService_GetFileMetadata_FullMethodName     = "/proto.MasterService/GetFileMetadata"
+	MasterService_RegisterChunkServer_FullMethodName = "/proto.MasterService/RegisterChunkServer"
 )
 
 // MasterServiceClient is the client API for MasterService service.
@@ -40,6 +41,8 @@ type MasterServiceClient interface {
 	RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error)
 	// Client retrieves metadata for an existing file
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
+	// Registering chunk servers in master pool of servers
+	RegisterChunkServer(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 }
 
 type masterServiceClient struct {
@@ -100,6 +103,16 @@ func (c *masterServiceClient) GetFileMetadata(ctx context.Context, in *GetFileMe
 	return out, nil
 }
 
+func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterResponse)
+	err := c.cc.Invoke(ctx, MasterService_RegisterChunkServer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterServiceServer is the server API for MasterService service.
 // All implementations must embed UnimplementedMasterServiceServer
 // for forward compatibility.
@@ -114,6 +127,8 @@ type MasterServiceServer interface {
 	RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error)
 	// Client retrieves metadata for an existing file
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
+	// Registering chunk servers in master pool of servers
+	RegisterChunkServer(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	mustEmbedUnimplementedMasterServiceServer()
 }
 
@@ -138,6 +153,9 @@ func (UnimplementedMasterServiceServer) RegisterFile(context.Context, *RegisterF
 }
 func (UnimplementedMasterServiceServer) GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFileMetadata not implemented")
+}
+func (UnimplementedMasterServiceServer) RegisterChunkServer(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterChunkServer not implemented")
 }
 func (UnimplementedMasterServiceServer) mustEmbedUnimplementedMasterServiceServer() {}
 func (UnimplementedMasterServiceServer) testEmbeddedByValue()                       {}
@@ -250,6 +268,24 @@ func _MasterService_GetFileMetadata_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterService_RegisterChunkServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServiceServer).RegisterChunkServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterService_RegisterChunkServer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServiceServer).RegisterChunkServer(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterService_ServiceDesc is the grpc.ServiceDesc for MasterService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -276,6 +312,10 @@ var MasterService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFileMetadata",
 			Handler:    _MasterService_GetFileMetadata_Handler,
+		},
+		{
+			MethodName: "RegisterChunkServer",
+			Handler:    _MasterService_RegisterChunkServer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

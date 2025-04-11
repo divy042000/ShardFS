@@ -9,7 +9,7 @@ import (
 func main() {
     serverID := os.Getenv("SERVER_ID")
     if serverID == "" {
-        serverID = "chunk_server_1"
+        serverID = "chunk_server_3"
     }
 
     storagePath := os.Getenv("STORAGE_PATH")

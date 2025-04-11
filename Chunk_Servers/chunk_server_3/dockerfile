@@ -17,5 +17,5 @@ WORKDIR /app
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/chunkserver .
 RUN chmod +x /app/chunkserver
-EXPOSE 50051
+EXPOSE 50054
 CMD ["/app/chunkserver"]

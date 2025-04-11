@@ -150,6 +150,7 @@ func (ms *MasterServer) Start() {
 
 // Updated gRPC methods to use WorkerPool
 func (ms *MasterServer) RegisterChunkServer(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	fmt.Printf("Received registration from chunk server: %s\n", req.Address) // Log incoming request
 	responseChan := make(chan interface{}, 1)
 	job := Job{
 		Type:     RegisterChunkServerJob,
@@ -160,8 +161,10 @@ func (ms *MasterServer) RegisterChunkServer(ctx context.Context, req *pb.Registe
 	result := <-responseChan
 	res := result.(JobResult)
 	if !res.Success {
+		fmt.Printf("Chunk server registration failed: %s\n", res.Error) // Log failure
 		return &pb.RegisterResponse{Success: false, Message: res.Error.Error()}, res.Error
 	}
+	fmt.Printf("Chunk server %s registered successfully\n", req.Address) // Log success
 	return res.Data.(*pb.RegisterResponse), nil
 }
 

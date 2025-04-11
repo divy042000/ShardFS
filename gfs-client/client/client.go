@@ -31,6 +31,8 @@ func NewClient(masterAddr string) (*Client, error) {
 		master:     pb.NewMasterServiceClient(conn),
 	}, nil
 }
+
+
 // Close closes the gRPC connection
 func (c *Client) Close() {
 	c.masterConn.Close()

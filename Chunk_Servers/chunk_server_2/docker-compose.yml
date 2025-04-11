@@ -3,15 +3,15 @@ services:
     build:
       context: .
       dockerfile: dockerfile
-    container_name: chunk_server_container
+    container_name: chunk_server_container_2
     ports:
-      - "50051:50051"
+      - "50053:50053"
     networks:
       - shared_file_network
     environment:
-      - SERVER_ID=chunk1
+      - SERVER_ID=chunk2
       - STORAGE_PATH=/data
-      - MASTER_ADDRESS=master_server_container:50052  # Use container name
+      - MASTER_ADDRESS=master_server_container:50052 
     volumes:
       - chunk_data:/data
     command: ["/app/chunkserver"]

@@ -39,9 +39,9 @@ func NewChunkServer(serverID, storagePath, masterAddress string, workerCount int
 
 // Start initializes the gRPC server and handles RPCs
 func (cs *ChunkServer) Start() {
-	listener, err := net.Listen("tcp", ":50051") // ✅ Ensure Chunk Server runs on 50051
+	listener, err := net.Listen("tcp", ":50053") // ✅ Ensure Chunk Server runs on 50053
 	if err != nil {
-		log.Fatalf("❌ Failed to listen on port 50051: %v", err)
+		log.Fatalf("❌ Failed to listen on port 50053: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
@@ -54,7 +54,7 @@ func (cs *ChunkServer) Start() {
 	// Start Heartbeat routine
 	go cs.heartbeatManager.StartHeartbeat()
 
-	log.Printf("✅ Chunk Server %s started on port 50051", cs.serverID)
+	log.Printf("✅ Chunk Server %s started on port 50053", cs.serverID)
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("❌ Failed to serve gRPC: %v", err)
 	}

@@ -25,16 +25,14 @@ var writeCmd = &cobra.Command{
 			log.Printf("Failed to stat file: %v", err)
 			return
 		}
-		
 		clientID := "gfs-client"
 		masterAddr, _ := cmd.Flags().GetString("master") // Get flag first
 		if envAddr := os.Getenv("MASTER_ADDRESS"); envAddr != "" {
 			masterAddr = envAddr // Override with env if set
 		}
-		if masterAddr == "" || masterAddr == "localhost:50052" { // Avoid localhost default
-			masterAddr = "master_server_container:50052" // Hardcode as last resort
+		if masterAddr == "" || masterAddr == "localhost:50052" {
+			masterAddr = "master_server_container:50052"
 		}
-
 		log.Printf("Master address: %s", masterAddr)
 		cl, err := client.NewClient(masterAddr)
 		if err != nil {
@@ -43,6 +41,8 @@ var writeCmd = &cobra.Command{
 		}
 		defer cl.Close()
 
+
+		log.Printf("Chunking file: %s", filePath)
 		// Chunk the file
 		chunks, err := chunking.ChunkFile(filePath)
 		if err != nil {

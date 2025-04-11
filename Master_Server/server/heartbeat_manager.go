@@ -94,7 +94,7 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	// Update ChunkServerInfo with available metrics
+	// Update current server info
 	info := &ChunkServerInfo{
 		ServerID:      req.ServerId,
 		FreeSpace:     req.FreeSpace,
@@ -108,11 +108,33 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	}
 	hm.chunkServers[req.ServerId] = info
 
-	// Calculate the score based on available metrics
+	// Compute scheduling score
 	score := calculateScore(info)
-	found := false
+	hm.updateOrPushServerScore(req.ServerId, score, req)
+
+	// Log the heartbeat nicely
+	log.Printf(
+		"💓 [%s] Heartbeat received from %s | CPU: %.2f%% | Mem: %.2f%% | Free: %dMB / Total: %dMB | Load: %.2f | Network: %.2fKB/s | Chunks: %d",
+		time.Now().Format("15:04:05"),
+		req.ServerId,
+		req.CpuUsage,
+		req.MemoryUsage,
+		req.FreeSpace,
+		req.TotalSpace,
+		req.Load,
+		req.NetworkUsage,
+		len(req.ChunkIds),
+	)
+
+	return &pb.HeartbeatResponse{
+		Success: true,
+		Message: "✅ Heartbeat received successfully",
+	}, nil
+}
+
+func (hm *HeartbeatManager) updateOrPushServerScore(serverID string, score float64, req *pb.HeartbeatRequest) {
 	for i, item := range hm.pq {
-		if item.ServerID == req.ServerId {
+		if item.ServerID == serverID {
 			hm.pq[i].Score = score
 			hm.pq[i].FreeSpace = req.FreeSpace
 			hm.pq[i].CPUUsage = req.CpuUsage
@@ -120,30 +142,20 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 			hm.pq[i].NetworkUsage = req.NetworkUsage
 			hm.pq[i].Load = req.Load
 			heap.Fix(&hm.pq, i)
-			found = true
-			break
+			return
 		}
 	}
 
-	if !found {
-		heap.Push(&hm.pq, &ServerScore{
-			ServerID:     req.ServerId,
-			Score:        score,
-			FreeSpace:    req.FreeSpace,
-			CPUUsage:     req.CpuUsage,
-			MemoryUsage:  req.MemoryUsage,
-			NetworkUsage: req.NetworkUsage,
-			Load:         req.Load,
-		})
-	}
-
-	log.Printf("💓 Received heartbeat from %s | Free Space: %d MB Total Space : %d MB| Chunks: %d | CPU: %.2f%%",
-		req.ServerId, req.FreeSpace, req.TotalSpace, len(req.ChunkIds), req.CpuUsage)
-
-	return &pb.HeartbeatResponse{
-		Success: true,
-		Message: "✅ Heartbeat received successfully",
-	}, nil
+	// Not found — push new
+	heap.Push(&hm.pq, &ServerScore{
+		ServerID:     serverID,
+		Score:        score,
+		FreeSpace:    req.FreeSpace,
+		CPUUsage:     req.CpuUsage,
+		MemoryUsage:  req.MemoryUsage,
+		NetworkUsage: req.NetworkUsage,
+		Load:         req.Load,
+	})
 }
 
 // calculate score computes a score comprising of available metric score out of heartbeat

@@ -1,0 +1,24 @@
+services:
+  chunkserver:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: chunk_server_container
+    ports:
+      - "50051:50051"
+    networks:
+      - shared_file_network
+    environment:
+      - SERVER_ID=chunk1
+      - STORAGE_PATH=/data
+      - MASTER_ADDRESS=master_server_container:50052  # Use container name
+    volumes:
+      - chunk_data:/data
+    command: ["/app/chunkserver"]
+
+volumes:
+  chunk_data:
+
+networks:
+  shared_file_network:
+    external: true

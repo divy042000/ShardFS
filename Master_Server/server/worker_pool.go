@@ -32,11 +32,11 @@ type JobResult struct {
 
 
 type WorkerPool struct{
-	workers int // Number of workers in the pool
-	jobQueue chan Job // Channel to queue jobs
-	wg       sync.WaitGroup // WaitGroup to synchronize worker completion
-	shutdown chan struct{} // Channel to signal shutdown
-	executor func(Job) interface{} // Function to execute the job
+	workers int 
+	jobQueue chan Job
+	wg       sync.WaitGroup
+	shutdown chan struct{} 
+	executor func(Job) interface{} 
 }
 
 // NewWorkerPool creates a new worker pool with the specified number of workers and job queue size

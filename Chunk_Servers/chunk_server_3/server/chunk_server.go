@@ -6,11 +6,11 @@ import (
 	"net"
 	"sync"
 	"time"
-
+     "os"
+	"google.golang.org/grpc/credentials/insecure"
+	 "google.golang.org/grpc"
 	pb "chunk_server_1/proto"
 	"chunk_server_1/storage"
-
-	"google.golang.org/grpc"
 )
 
 // ChunkServer represents a single chunk server
@@ -37,27 +37,45 @@ func NewChunkServer(serverID, storagePath, masterAddress string, workerCount int
 	}
 }
 
-// Start initializes the gRPC server and handles RPCs
 func (cs *ChunkServer) Start() {
-	listener, err := net.Listen("tcp", ":50054") // ✅ Ensure Chunk Server runs on 50054
-	if err != nil {
-		log.Fatalf("❌ Failed to listen on port 50054: %v", err)
-	}
+    // Register with master
+    masterAddr := "master_server_container:50052"
+	ChunkServerAddr := os.Getenv("CHUNK_SERVER_ADDRESS")
+    conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+    if err != nil {
+        log.Fatalf("❌ Failed to dial master at %s: %v", masterAddr, err)
+    }
+    defer conn.Close()
+    client := pb.NewMasterServiceClient(conn)
+    log.Printf("Attempting to register chunk server %s at %s", cs.serverID, ChunkServerAddr)
+    resp, err := client.RegisterChunkServer(context.Background(), &pb.RegisterChunkServerRequest{
+        ServerId: cs.serverID, // e.g., "chunk_server_1"
+        Address:  ChunkServerAddr,  // e.g., "chunk_server_container:50051"
+    })
+    if err != nil {
+        log.Printf("❌ Failed to register with master: %v", err)
+    } else {
+        log.Printf("✅ Registered with master: %s", resp.Message)
+    }
 
-	grpcServer := grpc.NewServer()
-	rpcServer := NewRPCServer(cs)
+    // Start gRPC server
+    listener, err := net.Listen("tcp", ":50051")
+    if err != nil {
+        log.Fatalf("❌ Failed to listen on port 50051: %v", err)
+    }
 
-	// ✅ Register gRPC services
-	pb.RegisterChunkServiceServer(grpcServer, rpcServer)
-	pb.RegisterHeartbeatServiceServer(grpcServer, cs.heartbeatManager) // ✅ Correct
+    grpcServer := grpc.NewServer()
+    rpcServer := NewRPCServer(cs)
 
-	// Start Heartbeat routine
-	go cs.heartbeatManager.StartHeartbeat()
+    pb.RegisterChunkServiceServer(grpcServer, rpcServer)
+    pb.RegisterHeartbeatServiceServer(grpcServer, cs.heartbeatManager)
 
-	log.Printf("✅ Chunk Server %s started on port 50054", cs.serverID)
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("❌ Failed to serve gRPC: %v", err)
-	}
+    go cs.heartbeatManager.StartHeartbeat()
+
+    log.Printf("✅ Chunk Server %s started on port 50051", cs.serverID)
+    if err := grpcServer.Serve(listener); err != nil {
+        log.Fatalf("❌ Failed to serve gRPC: %v", err)
+    }
 }
 
 // WriteChunk handles chunk write requests from clients

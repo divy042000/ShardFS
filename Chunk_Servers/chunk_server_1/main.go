@@ -21,7 +21,7 @@ func main() {
     if masterAddress == "" {
         masterAddress = "master-server:50052"
     }
-
+    
     workerCount := 5
 
     if err := os.MkdirAll(storagePath, os.ModePerm); err != nil {

@@ -96,7 +96,7 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 
 	// Update current server info
 	info := &ChunkServerInfo{
-		ServerID:      req.ServerId,
+		ServerID:      req.ServerId, 
 		FreeSpace:     req.FreeSpace,
 		TotalSpace:    req.TotalSpace,
 		StoredChunks:  req.ChunkIds,
@@ -211,13 +211,14 @@ func (hm *HeartbeatManager) GetActiveChunkServers(servers []string) []string {
 	defer hm.mu.Unlock()
 
 	var activeServers []string
-	for _, serverID := range servers {
+	for _, serverID := range servers { 
 		if _, exists := hm.chunkServers[serverID]; exists {
 			activeServers = append(activeServers, serverID)
 		}
 	}
 	return activeServers
 }
+
 
 // IsChunkServerActive checks if a chunk server is active
 func (hm *HeartbeatManager) IsChunkServerActive(serverID string) bool {

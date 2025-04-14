@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -36,7 +37,9 @@ func NewChunkPacket(fileID string, chunkIndex int32, leader string, replicas []s
 
 // ToProtoChunkServers converts to proto format
 func (cp ChunkPacket) ToProtoChunkServers() *pb.ChunkServers {
-	return &pb.ChunkServers{Servers: []string{cp.LeaderAddress}}
+	servers := []string{cp.LeaderAddress}
+	servers = append(servers, cp.ReplicaAddresses...)
+	return &pb.ChunkServers{Servers: servers}
 }
 
 // ToProtoReplicaServers returns replica addresses
@@ -52,14 +55,48 @@ func NewReplicaSelector() *ReplicaSelector {
 	return &ReplicaSelector{}
 }
 
-// SelectReplicas selects 'count' replica servers excluding the leader
-func (rs *ReplicaSelector) SelectReplicas(leader string, count int, servers []string) []string {
+func (rs *ReplicaSelector) SelectReplicas(leader string, count int, servers []string, chunkSize int64, spaces map[string]int64) []string {
+	if count <= 0 {
+		log.Printf("[SelectReplicas] Invalid count=%d for leader %s", count, leader)
+		return nil
+	}
+	if chunkSize <= 0 {
+		log.Printf("[SelectReplicas] Invalid chunkSize=%d MB for leader %s", chunkSize, leader)
+		return nil
+	}
+
 	replicas := make([]string, 0, count)
 	for _, server := range servers {
-		if server != leader && len(replicas) < count {
-			replicas = append(replicas, server)
+		if server == leader {
+			log.Printf("[SelectReplicas] Skipping leader %s", server)
+			continue
+		}
+
+		freeSpaceMB, exists := spaces[server]
+		if !exists {
+			log.Printf("[SelectReplicas] Server %s not found in spaces", server)
+			continue
+		}
+
+		if freeSpaceMB < chunkSize {
+			log.Printf("[SelectReplicas] Server %s skipped: FreeSpace=%d MB < ChunkSize=%d MB",
+				server, freeSpaceMB, chunkSize)
+			continue
+		}
+
+		log.Printf("[SelectReplicas] Server %s selected: FreeSpace=%d MB >= ChunkSize=%d MB",
+			server, freeSpaceMB, chunkSize)
+		replicas = append(replicas, server)
+
+		if len(replicas) >= count {
+			break
 		}
 	}
+
+	if len(replicas) < count {
+		log.Printf("[SelectReplicas] Warning: Selected %d replicas, requested %d for leader %s", len(replicas), count, leader)
+	}
+
 	return replicas
 }
 
@@ -67,7 +104,7 @@ func (rs *ReplicaSelector) SelectReplicas(leader string, count int, servers []st
 type DataManager struct {
 	mu           sync.Mutex // Added for thread safety of chunkServers
 	chunkServers []string
-	serverLoads struct {
+	serverLoads  struct {
 		sync.RWMutex
 		m map[string]int64
 	}
@@ -118,22 +155,61 @@ func (dm *DataManager) RegisterFile(req *pb.RegisterFileRequest) (string, error)
 	return fileID, nil
 }
 
-// MaxChunksForServer calculates max chunks a server can handle
-func (dm *DataManager) MaxChunksForServer(server string) int {
-	dm.serverSpaces.RLock()
-	defer dm.serverSpaces.RUnlock()
-	space := dm.serverSpaces.m[server]
-	if space == 0 {
-		return 0 // Avoid division by zero
+// MaxChunksForServer calculates how many chunks can fit on a server based on free space (bytes) and chunk sizes (bytes).
+func (dm *DataManager) MaxChunksForServer(serverID string, chunkSizes []int64) int {
+	if len(chunkSizes) == 0 {
+		log.Printf("[MaxChunksForServer] Empty chunkSizes for server %s", serverID)
+		return 0
 	}
-	return int(space / (64 * 1024 * 1024)) // 64MB chunks
+
+	// Retrieve free space (already in bytes)
+	dm.serverSpaces.RLock()
+	freeSpace, exists := dm.serverSpaces.m[serverID]
+	dm.serverSpaces.RUnlock()
+
+	if !exists {
+		log.Printf("[MaxChunksForServer] Server %s not found in serverSpaces", serverID)
+		return 0
+	}
+
+	if freeSpace <= 0 {
+		log.Printf("[MaxChunksForServer] Server %s: FreeSpace=%d bytes, insufficient", serverID, freeSpace)
+		return 0
+	}
+
+	maxChunks := 0
+	usedSpace := int64(0)
+	for i, size := range chunkSizes {
+		if size <= 0 {
+			log.Printf("[MaxChunksForServer] Skipping invalid chunkSize=%d bytes at index %d for server %s", size, i, serverID)
+			continue
+		}
+
+		if usedSpace+size > freeSpace {
+			log.Printf("[MaxChunksForServer] Stopping at index %d: UsedSpace=%d + ChunkSize=%d > FreeSpace=%d",
+				i, usedSpace, size, freeSpace)
+			break
+		}
+
+		usedSpace += size
+		maxChunks++
+		log.Printf("[MaxChunksForServer] Chunk %d fits: UsedSpace=%d, ChunkSize=%d, FreeSpace remaining=%d",
+			i, usedSpace, size, freeSpace-usedSpace)
+	}
+
+	log.Printf("[MaxChunksForServer] Server %s: FreeSpace=%d, UsedSpace=%d, MaxChunks=%d",
+		serverID, freeSpace, usedSpace, maxChunks)
+	return maxChunks
 }
 
 // UpdateLoad updates the load for a server
-func (dm *DataManager) UpdateLoad(server string, size int64) {
+func (dm *DataManager) UpdateLoad(serverID string, chunkSize int64) {
 	dm.serverLoads.Lock()
 	defer dm.serverLoads.Unlock()
-	dm.serverLoads.m[server] += size
+	if _, exists := dm.serverLoads.m[serverID]; !exists {
+		dm.serverLoads.m[serverID] = 0
+	}
+	dm.serverLoads.m[serverID] += chunkSize
 }
 
 // ChunkManager handles chunk storage and persistence

@@ -103,6 +103,7 @@ func (hm *HeartbeatManager) sendHeartbeat() {
 	req := &pb.HeartbeatRequest{
 		ServerId:     hm.serverID,
 		FreeSpace:    freeSpace,
+		TotalSpace:   totalSpace, 
 		CpuUsage:     float32(cpuUsage),
 		MemoryUsage:  float32(memoryUsage),
 		NetworkUsage: float32(networkUsage),

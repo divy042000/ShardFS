@@ -108,6 +108,15 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	}
 	hm.chunkServers[req.ServerId] = info
 
+	// Update dataManager if linked
+    if hm.ms != nil {
+        hm.ms.dataManager.serverSpaces.Lock()
+        hm.ms.dataManager.serverSpaces.m[req.ServerId] = req.FreeSpace
+        hm.ms.dataManager.serverSpaces.Unlock()
+        hm.ms.dataManager.serverLoads.Lock()
+        hm.ms.dataManager.serverLoads.m[req.ServerId] = int64(req.Load * 100) // Scale as needed
+        hm.ms.dataManager.serverLoads.Unlock()
+    }
 	// Compute scheduling score
 	score := calculateScore(info)
 	hm.updateOrPushServerScore(req.ServerId, score, req)

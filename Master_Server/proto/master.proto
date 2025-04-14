@@ -22,21 +22,19 @@ service MasterService {
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
 
   // Registering chunk servers in master pool of servers
-  rpc RegisterChunkServer (RegisterRequest) returns (RegisterResponse);
+ rpc RegisterChunkServer (RegisterChunkServerRequest) returns (RegisterChunkServerResponse);
 }
 
 
-// RegisterRequest
-message RegisterRequest{
+message RegisterChunkServerRequest {
   string server_id = 1;
   string address = 2;
 }
-// Register Response
-message RegisterResponse{
+
+message RegisterChunkServerResponse {
   bool success = 1;
   string message = 2;
 }
-
 
 
 
@@ -72,12 +70,12 @@ message RegisterFileRequest {
 
 message RegisterFileResponse {
   string file_id = 1;
-  string leader_server = 2; // Primary chunk server endpoint
-  map<int32, ChunkServers> chunk_assignments = 3; // Chunk index -> primary chunk server endpoints
-  map<int32, ReplicaServers> replication_map = 4; // Chunk index -> list of replica servers
+  map<int32, ChunkServers> chunk_assignments = 3;
+  map<int32, ReplicaServers> replication_map = 4;
   bool success = 5;
   string message = 6;
 }
+
 
 
 

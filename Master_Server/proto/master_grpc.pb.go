@@ -42,7 +42,7 @@ type MasterServiceClient interface {
 	// Client retrieves metadata for an existing file
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
 	// Registering chunk servers in master pool of servers
-	RegisterChunkServer(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	RegisterChunkServer(ctx context.Context, in *RegisterChunkServerRequest, opts ...grpc.CallOption) (*RegisterChunkServerResponse, error)
 }
 
 type masterServiceClient struct {
@@ -103,9 +103,9 @@ func (c *masterServiceClient) GetFileMetadata(ctx context.Context, in *GetFileMe
 	return out, nil
 }
 
-func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
+func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *RegisterChunkServerRequest, opts ...grpc.CallOption) (*RegisterChunkServerResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RegisterResponse)
+	out := new(RegisterChunkServerResponse)
 	err := c.cc.Invoke(ctx, MasterService_RegisterChunkServer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ type MasterServiceServer interface {
 	// Client retrieves metadata for an existing file
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
 	// Registering chunk servers in master pool of servers
-	RegisterChunkServer(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error)
 	mustEmbedUnimplementedMasterServiceServer()
 }
 
@@ -154,7 +154,7 @@ func (UnimplementedMasterServiceServer) RegisterFile(context.Context, *RegisterF
 func (UnimplementedMasterServiceServer) GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFileMetadata not implemented")
 }
-func (UnimplementedMasterServiceServer) RegisterChunkServer(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+func (UnimplementedMasterServiceServer) RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterChunkServer not implemented")
 }
 func (UnimplementedMasterServiceServer) mustEmbedUnimplementedMasterServiceServer() {}
@@ -269,7 +269,7 @@ func _MasterService_GetFileMetadata_Handler(srv interface{}, ctx context.Context
 }
 
 func _MasterService_RegisterChunkServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRequest)
+	in := new(RegisterChunkServerRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func _MasterService_RegisterChunkServer_Handler(srv interface{}, ctx context.Con
 		FullMethod: MasterService_RegisterChunkServer_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServiceServer).RegisterChunkServer(ctx, req.(*RegisterRequest))
+		return srv.(MasterServiceServer).RegisterChunkServer(ctx, req.(*RegisterChunkServerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

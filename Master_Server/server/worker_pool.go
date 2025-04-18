@@ -13,6 +13,7 @@ const (
 	AssignChunksJob
 	ReportChunkJob
 	GetChunkLocationsJob
+	HeartbeatJob
 )
 
 // Job represents a task to be executed by a worker pool

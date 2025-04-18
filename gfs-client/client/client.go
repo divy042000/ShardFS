@@ -22,16 +22,15 @@ type Client struct {
 // NewClient initializes a new gRPC client
 func NewClient(masterAddr string) (*Client, error) {
 	fmt.Printf("Connecting to master server at %s\n", masterAddr)
-	conn,err := grpc.NewClient(masterAddr,grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master server: %v", err)
 	}
-	return &Client{	
+	return &Client{
 		masterConn: conn,
 		master:     pb.NewMasterServiceClient(conn),
 	}, nil
 }
-
 
 // Close closes the gRPC connection
 func (c *Client) Close() {
@@ -88,60 +87,136 @@ func (c *Client) GetChunkLocations(ctx context.Context, fileName string, chunkIn
 	return resp, nil
 }
 
-// UploadChunk uploads a chunk to a chunk server with retries
-func (c *Client) UploadChunk(chunkServerAddr string, chunkID string, data []byte, retries int) error {
-	const maxRetries = 3
-	for attempt := 0; attempt <= retries && attempt <= maxRetries; attempt++ {
-		err := c.uploadChunkAttempt(chunkServerAddr, chunkID, data)
-		if err == nil {
-			return nil
+
+func (c *Client) UploadChunk(FileId string,chunkServerAddr string, chunkID string, data []byte, follower1, follower2 string, retries int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	log.Printf("🔍 Starting upload attempt for chunk %s to %s with %d retries", chunkID, chunkServerAddr, retries)
+	var lastErr error
+	for attempt := 0; attempt < retries; attempt++ {
+		log.Printf("🔄 Attempt %d/%d to upload chunk %s to %s", attempt+1, retries, chunkID, chunkServerAddr)
+
+		conn, err := grpc.Dial(chunkServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Printf("❌ Connection failed to chunk server %s: %v", chunkServerAddr, err)
+			lastErr = fmt.Errorf("failed to connect to chunk server %s: %v", chunkServerAddr, err)
+			time.Sleep(time.Duration(attempt+1) * time.Second) 
+			continue
 		}
-		log.Printf("Upload attempt %d/%d failed for chunk %s to %s: %v", attempt+1, maxRetries, chunkID, chunkServerAddr, err)
-		time.Sleep(time.Second * time.Duration(attempt+1)) // Exponential backoff
+		defer func() {
+			log.Printf("🔌 Closing connection to chunk server %s", chunkServerAddr)
+			conn.Close()
+		}()
+
+		client := pb.NewChunkServiceClient(conn)
+		log.Printf("📡 Opening upload stream for chunk %s to %s", chunkID, chunkServerAddr)
+		stream, err := client.UploadChunk(ctx)
+		if err != nil {
+			log.Printf("❌ Failed to open upload stream for chunk %s: %v", chunkID, err)
+			lastErr = fmt.Errorf("failed to open upload stream: %v", err)
+			time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
+			continue
+		}
+
+		req := &pb.ChunkUploadRequest{
+			FileId: FileId,
+			ChunkId:   chunkID,
+			Data:      data,
+			Leader:    chunkServerAddr,
+			Follower1: follower1,
+			Follower2: follower2,
+		}
+		log.Printf("📤 Sending chunk %s data to %s", chunkID, chunkServerAddr)
+		if err := stream.Send(req); err != nil {
+			log.Printf("❌ Failed to send chunk %s to %s: %v", chunkID, chunkServerAddr, err)
+			lastErr = fmt.Errorf("failed to send chunk: %v", err)
+			time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
+			continue
+		}
+
+		log.Printf("📨 Receiving response for chunk %s from %s", chunkID, chunkServerAddr)
+		resp, err := stream.CloseAndRecv()
+		if err != nil {
+			log.Printf("❌ Failed to receive response for chunk %s from %s: %v", chunkID, chunkServerAddr, err)
+			lastErr = fmt.Errorf("failed to receive response: %v", err)
+			time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
+			continue
+		}
+		if !resp.Success {
+			log.Printf("⚠️ Upload failed for chunk %s to %s: %s", chunkID, chunkServerAddr, resp.Message)
+			lastErr = fmt.Errorf("upload failed: %s", resp.Message)
+			time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
+			continue
+		}
+
+		log.Printf("✅ Chunk %s uploaded successfully to %s", chunkID, chunkServerAddr)
+		return nil
 	}
-	return fmt.Errorf("failed to upload chunk %s to %s after %d retries", chunkID, chunkServerAddr, maxRetries)
+
+	log.Printf("❌ All %d upload attempts failed for chunk %s to %s: %v", retries, chunkID, chunkServerAddr, lastErr)
+	return fmt.Errorf("all %d upload attempts failed for chunk %s: %v", retries, chunkID, lastErr)
 }
 
-func (c *Client) uploadChunkAttempt(chunkServerAddr, chunkID string, data []byte) error {
+func (c *Client) uploadChunkAttempt(chunkServerAddr, chunkID string, data []byte, follower1, follower2 string, retries int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Establish a connection to the chunk server
+	log.Printf("🔍 Starting upload attempt for chunk %s to %s", chunkID, chunkServerAddr)
 	conn, err := grpc.Dial(chunkServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
+		log.Printf("❌ Connection failed to chunk server %s: %v", chunkServerAddr, err)
 		return fmt.Errorf("failed to connect to chunk server %s: %v", chunkServerAddr, err)
 	}
-	defer conn.Close()
+	defer func() {
+		log.Printf("🔌 Closing connection to chunk server %s", chunkServerAddr)
+		conn.Close()
+	}()
 
 	client := pb.NewChunkServiceClient(conn)
+	log.Printf("📡 Opening upload stream for chunk %s to %s", chunkID, chunkServerAddr)
 	stream, err := client.UploadChunk(ctx)
 	if err != nil {
+		log.Printf("❌ Failed to open upload stream for chunk %s: %v", chunkID, err)
 		return fmt.Errorf("failed to open upload stream: %v", err)
 	}
 
-	// Send data in 1MB chunks
-	const bufferSize = 1024 * 1024
+	const bufferSize = 1024 * 1024 // 1MB
+	totalChunks := (len(data) + bufferSize - 1) / bufferSize
+	log.Printf("📦 Starting to send chunk %s in %d parts to %s", chunkID, totalChunks, chunkServerAddr)
+
 	for i := 0; i < len(data); i += bufferSize {
 		end := i + bufferSize
 		if end > len(data) {
 			end = len(data)
 		}
-		err = stream.Send(&pb.ChunkData{
-			ChunkId: chunkID,
-			Data:    data[i:end],
-		})
-		if err != nil {
+		partNumber := (i / bufferSize) + 1
+		log.Printf("📤 Sending part %d/%d for chunk %s to %s", partNumber, totalChunks, chunkID, chunkServerAddr)
+		req := &pb.ChunkUploadRequest{
+			ChunkId:   chunkID,
+			Data:      data[i:end],
+			Leader:    chunkServerAddr,
+			Follower1: follower1,
+			Follower2: follower2,
+		}
+		if err := stream.Send(req); err != nil {
+			log.Printf("❌ Failed to send part %d for chunk %s to %s: %v", partNumber, chunkID, chunkServerAddr, err)
 			return fmt.Errorf("failed to send chunk data: %v", err)
 		}
+		log.Printf("✅ Part %d/%d sent successfully for chunk %s", partNumber, totalChunks, chunkID)
 	}
 
+	log.Printf("📨 Finalizing upload for chunk %s to %s", chunkID, chunkServerAddr)
 	resp, err := stream.CloseAndRecv()
 	if err != nil {
+		log.Printf("❌ Failed to receive response for chunk %s from %s: %v", chunkID, chunkServerAddr, err)
 		return fmt.Errorf("failed to close upload stream: %v", err)
 	}
 	if !resp.Success {
+		log.Printf("⚠️ Chunk upload failed for %s to %s: %s", chunkID, chunkServerAddr, resp.Message)
 		return fmt.Errorf("chunk upload failed: %s", resp.Message)
 	}
+
+	log.Printf("✅ Chunk %s uploaded successfully to %s", chunkID, chunkServerAddr)
 	return nil
 }
 

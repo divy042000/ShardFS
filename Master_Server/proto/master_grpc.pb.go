@@ -21,7 +21,6 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	MasterService_GetChunkLocations_FullMethodName   = "/proto.MasterService/GetChunkLocations"
 	MasterService_ReportChunk_FullMethodName         = "/proto.MasterService/ReportChunk"
-	MasterService_SendHeartbeat_FullMethodName       = "/proto.MasterService/SendHeartbeat"
 	MasterService_RegisterFile_FullMethodName        = "/proto.MasterService/RegisterFile"
 	MasterService_GetFileMetadata_FullMethodName     = "/proto.MasterService/GetFileMetadata"
 	MasterService_RegisterChunkServer_FullMethodName = "/proto.MasterService/RegisterChunkServer"
@@ -35,11 +34,7 @@ const (
 type MasterServiceClient interface {
 	GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error)
 	ReportChunk(ctx context.Context, in *ChunkReport, opts ...grpc.CallOption) (*ChunkResponse, error)
-	// Receives heartbeat from chunkservers
-	SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
-	// Client registers a new file and gets chunk server assignments
 	RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error)
-	// Client retrieves metadata for an existing file
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
 	// Registering chunk servers in master pool of servers
 	RegisterChunkServer(ctx context.Context, in *RegisterChunkServerRequest, opts ...grpc.CallOption) (*RegisterChunkServerResponse, error)
@@ -67,16 +62,6 @@ func (c *masterServiceClient) ReportChunk(ctx context.Context, in *ChunkReport, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ChunkResponse)
 	err := c.cc.Invoke(ctx, MasterService_ReportChunk_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *masterServiceClient) SendHeartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HeartbeatResponse)
-	err := c.cc.Invoke(ctx, MasterService_SendHeartbeat_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,11 +106,7 @@ func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *Regis
 type MasterServiceServer interface {
 	GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error)
 	ReportChunk(context.Context, *ChunkReport) (*ChunkResponse, error)
-	// Receives heartbeat from chunkservers
-	SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
-	// Client registers a new file and gets chunk server assignments
 	RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error)
-	// Client retrieves metadata for an existing file
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
 	// Registering chunk servers in master pool of servers
 	RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error)
@@ -144,9 +125,6 @@ func (UnimplementedMasterServiceServer) GetChunkLocations(context.Context, *GetC
 }
 func (UnimplementedMasterServiceServer) ReportChunk(context.Context, *ChunkReport) (*ChunkResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReportChunk not implemented")
-}
-func (UnimplementedMasterServiceServer) SendHeartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
 }
 func (UnimplementedMasterServiceServer) RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterFile not implemented")
@@ -210,24 +188,6 @@ func _MasterService_ReportChunk_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MasterServiceServer).ReportChunk(ctx, req.(*ChunkReport))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _MasterService_SendHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HeartbeatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MasterServiceServer).SendHeartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MasterService_SendHeartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServiceServer).SendHeartbeat(ctx, req.(*HeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -300,10 +260,6 @@ var MasterService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportChunk",
 			Handler:    _MasterService_ReportChunk_Handler,
-		},
-		{
-			MethodName: "SendHeartbeat",
-			Handler:    _MasterService_SendHeartbeat_Handler,
 		},
 		{
 			MethodName: "RegisterFile",

@@ -63,7 +63,7 @@ var appendCmd = &cobra.Command{
 		if !resp.Success {
 			log.Fatalf("server rejected append operation: %s", resp.Message)
 		}
-
+        var FileId string
 		// Upload new chunks in parallel 
 		var wg sync.WaitGroup
 		errChan := make(chan error, len(chunks))
@@ -77,7 +77,7 @@ var appendCmd = &cobra.Command{
 					errChan <- fmt.Errorf("no chunk server assigned for chunk %d", index)
 					return
 				}
-				err := cl.UploadChunk(serverAddr, chunkID, chunk.Data, 3) // 3 retries
+				err := cl.UploadChunk(FileId,serverAddr, chunkID, chunk.Data, fileName, clientID, 3) // 3 retries
 				if err != nil {
 					errChan <- fmt.Errorf("failed to upload chunk %d: %v", index, err)
 					return

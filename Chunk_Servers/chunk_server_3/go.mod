@@ -1,4 +1,4 @@
-module chunk_server_1
+module chunk_server_3
 
 go 1.22
 

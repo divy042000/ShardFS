@@ -100,40 +100,6 @@ func (rs *ReplicaSelector) SelectReplicas(leader string, count int, servers []st
 	return replicas
 }
 
-// DataManager manages server and file metadata
-type DataManager struct {
-	mu           sync.Mutex // Added for thread safety of chunkServers
-	chunkServers []string
-	serverLoads  struct {
-		sync.RWMutex
-		m map[string]int64
-	}
-	serverSpaces struct {
-		sync.RWMutex
-		m map[string]int64
-	}
-	fileMetadata struct {
-		sync.RWMutex
-		m map[string]*pb.RegisterFileRequest
-	}
-	clientFileMap struct {
-		sync.RWMutex
-		m map[string]string
-	}
-}
-
-// NewDataManager initializes a DataManager
-func NewDataManager(chunkServers []string) *DataManager {
-	dm := &DataManager{
-		mu:           sync.Mutex{}, // Initialize the mutex
-		chunkServers: chunkServers,
-	}
-	dm.serverLoads.m = make(map[string]int64)
-	dm.serverSpaces.m = make(map[string]int64)
-	dm.fileMetadata.m = make(map[string]*pb.RegisterFileRequest)
-	dm.clientFileMap.m = make(map[string]string)
-	return dm
-}
 
 // RegisterFile registers a file and returns its ID
 func (dm *DataManager) RegisterFile(req *pb.RegisterFileRequest) (string, error) {
@@ -155,52 +121,7 @@ func (dm *DataManager) RegisterFile(req *pb.RegisterFileRequest) (string, error)
 	return fileID, nil
 }
 
-// MaxChunksForServer calculates how many chunks can fit on a server based on free space (bytes) and chunk sizes (bytes).
-func (dm *DataManager) MaxChunksForServer(serverID string, chunkSizes []int64) int {
-	if len(chunkSizes) == 0 {
-		log.Printf("[MaxChunksForServer] Empty chunkSizes for server %s", serverID)
-		return 0
-	}
 
-	// Retrieve free space (already in bytes)
-	dm.serverSpaces.RLock()
-	freeSpace, exists := dm.serverSpaces.m[serverID]
-	dm.serverSpaces.RUnlock()
-
-	if !exists {
-		log.Printf("[MaxChunksForServer] Server %s not found in serverSpaces", serverID)
-		return 0
-	}
-
-	if freeSpace <= 0 {
-		log.Printf("[MaxChunksForServer] Server %s: FreeSpace=%d bytes, insufficient", serverID, freeSpace)
-		return 0
-	}
-
-	maxChunks := 0
-	usedSpace := int64(0)
-	for i, size := range chunkSizes {
-		if size <= 0 {
-			log.Printf("[MaxChunksForServer] Skipping invalid chunkSize=%d bytes at index %d for server %s", size, i, serverID)
-			continue
-		}
-
-		if usedSpace+size > freeSpace {
-			log.Printf("[MaxChunksForServer] Stopping at index %d: UsedSpace=%d + ChunkSize=%d > FreeSpace=%d",
-				i, usedSpace, size, freeSpace)
-			break
-		}
-
-		usedSpace += size
-		maxChunks++
-		log.Printf("[MaxChunksForServer] Chunk %d fits: UsedSpace=%d, ChunkSize=%d, FreeSpace remaining=%d",
-			i, usedSpace, size, freeSpace-usedSpace)
-	}
-
-	log.Printf("[MaxChunksForServer] Server %s: FreeSpace=%d, UsedSpace=%d, MaxChunks=%d",
-		serverID, freeSpace, usedSpace, maxChunks)
-	return maxChunks
-}
 
 // UpdateLoad updates the load for a server
 func (dm *DataManager) UpdateLoad(serverID string, chunkSize int64) {
@@ -209,7 +130,11 @@ func (dm *DataManager) UpdateLoad(serverID string, chunkSize int64) {
 	if _, exists := dm.serverLoads.m[serverID]; !exists {
 		dm.serverLoads.m[serverID] = 0
 	}
-	dm.serverLoads.m[serverID] += chunkSize
+	currentLoad, ok := dm.serverLoads.m[serverID].(int64)
+	if !ok {
+		currentLoad = 0
+	}
+	dm.serverLoads.m[serverID] = currentLoad + chunkSize
 }
 
 // ChunkManager handles chunk storage and persistence

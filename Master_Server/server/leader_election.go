@@ -2,16 +2,20 @@ package server
 
 import (
 	"log"
+	"sort"
 )
 
+// LeaderElector handles leader and replica selection
 type LeaderElector struct {
 	hm *HeartbeatManager
 }
 
+// NewLeaderElector creates a LeaderElector
 func NewLeaderElector(hm *HeartbeatManager) *LeaderElector {
 	return &LeaderElector{hm: hm}
 }
 
+// ElectLeader selects a leader for a chunk
 func (le *LeaderElector) ElectLeader(
 	chunkSize int64,
 	servers []string,
@@ -19,62 +23,105 @@ func (le *LeaderElector) ElectLeader(
 	spaces map[string]int64,
 ) string {
 	if chunkSize <= 0 {
-		log.Printf("[ElectLeader] Invalid input: chunkSize=%d Bytes", chunkSize)
+		log.Printf("⚠️ Invalid chunkSize: %d bytes", chunkSize)
 		return ""
 	}
 
 	le.hm.mu.Lock()
 	defer le.hm.mu.Unlock()
+	log.Printf("🔒 Acquired lock for leader election, chunkSize=%d bytes", chunkSize)
 
-	log.Printf("[ElectLeader] Chunk size to allocate: %d Bytes", chunkSize)
-	log.Printf("[ElectLeader] Candidate servers: %v", servers)
+	log.Printf("📋 Evaluating %d servers: %v", len(servers), servers)
+	log.Printf("📋 Priority queue size: %d", len(le.hm.pq))
+	log.Printf("📋 Starting leader election loop, pq size: %d", len(le.hm.pq))
+	for i, item := range le.hm.pq {
+		log.Printf("🔍 Iteration %d: ServerID=%s, Score=%.3f, FreeSpace=%d", i, item.ServerID, item.Score, item.FreeSpace)
+		serverID := item.ServerID
+		if !contains(servers, serverID) {
+			log.Printf("⚠️ Skipping %s: not in candidate list", serverID)
+			continue
+		}
+		// if !le.hm.IsChunkServerActive(serverID) {
+		// 	log.Printf("⚠️ Skipping %s: not active (no heartbeat)", serverID)
+		// 	continue
+		// }
+		log.Printf("✅ Evaluating %s: score=%.3f, freeSpace=%d bytes", serverID, item.Score, spaces[serverID])
+		if spaces[serverID] < chunkSize {
+			log.Printf("❌ Skipping %s: freeSpace=%d < chunkSize=%d", serverID, spaces[serverID], chunkSize)
+			continue
+		}
+		log.Printf("✅ Selected leader: %s, score=%.3f, freeSpace=%d bytes", serverID, item.Score, spaces[serverID])
+		return serverID
+	}
+	log.Printf("⚠️ No leader found for chunkSize=%d bytes", chunkSize)
+	return ""
+}
 
-	// Try priority queue
+// SelectReplicas selects replica servers
+func (le *LeaderElector) SelectReplicas(
+	leaderID string,
+	count int,
+	servers []string,
+	chunkSize int64,
+	spaces map[string]int64,
+) []string {
+	le.hm.mu.Lock()
+	defer le.hm.mu.Unlock()
+	log.Printf("🔒 Acquired lock for replica selection, leader=%s, count=%d", leaderID, count)
+
+	log.Printf("📋 Selecting %d replicas for chunkSize=%d bytes, excluding %s", count, chunkSize, leaderID)
+	candidates := make([]*ServerScore, 0, len(le.hm.pq))
 	for _, item := range le.hm.pq {
 		serverID := item.ServerID
-		freeSpace, exists := spaces[serverID]
-		if !exists {
-			log.Printf("[ElectLeader] Server %s in pq but not in spaces", serverID)
+		if serverID == leaderID {
+			log.Printf("⚠️ Skipping %s: is leader", serverID)
 			continue
 		}
-
-		log.Printf("[ElectLeader] Evaluating server %s | Free: %d Bytes | Score: %.2f", serverID, freeSpace, item.Score)
-
-		if freeSpace < chunkSize {
-			log.Printf("[ElectLeader] ❌ Skipping %s: not enough space (%d < %d)", serverID, freeSpace, chunkSize)
+		if !contains(servers, serverID) {
+			log.Printf("⚠️ Skipping %s: not in candidate list", serverID)
 			continue
 		}
-
-		for _, s := range servers {
-			if s == serverID && le.hm.chunkServers[serverID] != nil {
-				log.Printf("[ElectLeader] ✅ Selected leader: %s from pq", serverID)
-				return serverID
-			}
+		// if !le.hm.IsChunkServerActive(serverID) {
+		// 	log.Printf("⚠️ Skipping %s: not active (no heartbeat)", serverID)
+		// 	continue
+		// }
+		if spaces[serverID] < chunkSize {
+			log.Printf("❌ Skipping %s: freeSpace=%d < chunkSize=%d", serverID, spaces[serverID], chunkSize)
+			continue
 		}
+		log.Printf("✅ Candidate %s: score=%.3f, freeSpace=%d bytes", serverID, item.Score, item.FreeSpace)
+		candidates = append(candidates, item)
 	}
 
-	// Fallback to servers list
-	log.Printf("[ElectLeader] No leader found in pq, checking servers list...")
-	for _, serverID := range servers {
-		freeSpace, exists := spaces[serverID]
-		if !exists {
-			log.Printf("[ElectLeader] Server %s not in spaces", serverID)
-			continue
-		}
+	// Sort by score (ascending to prefer mid-range)
+	log.Printf("📊 Sorting %d candidates by score", len(candidates))
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Score < candidates[j].Score
+	})
 
-		log.Printf("[ElectLeader] Evaluating server %s | Free: %d MB", serverID, freeSpace)
-
-		if freeSpace < chunkSize {
-			log.Printf("[ElectLeader] ❌ Skipping %s: not enough space (%d < %d)", serverID, freeSpace, chunkSize)
-			continue
+	replicas := make([]string, 0, count)
+	for _, item := range candidates {
+		if len(replicas) >= count {
+			break
 		}
-
-		if le.hm.chunkServers[serverID] != nil {
-			log.Printf("[ElectLeader] ✅ Selected leader: %s from servers list", serverID)
-			return serverID
-		}
+		log.Printf("✅ Selected replica: %s, score=%.3f, freeSpace=%d bytes", item.ServerID, item.Score, item.FreeSpace)
+		replicas = append(replicas, item.ServerID)
 	}
 
-	log.Printf("[ElectLeader] ⚠️ No suitable leader found for chunkSize=%d MB, servers=%v, spaces=%v", chunkSize, servers, spaces)
-	return ""
+	if len(replicas) < count {
+		log.Printf("⚠️ Only found %d/%d replicas", len(replicas), count)
+	}
+
+	log.Printf("🔓 Released lock for replica selection")
+	return replicas
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

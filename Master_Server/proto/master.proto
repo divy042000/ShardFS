@@ -4,7 +4,6 @@ package proto;
 
 option go_package ="./";
 
-import "heartbeat.proto";
 
 // Master Service
 service MasterService {
@@ -12,13 +11,8 @@ service MasterService {
  
   rpc ReportChunk(ChunkReport) returns (ChunkResponse);
 
-  // Receives heartbeat from chunkservers
-  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-
-  // Client registers a new file and gets chunk server assignments
   rpc RegisterFile(RegisterFileRequest) returns (RegisterFileResponse);
   
-  // Client retrieves metadata for an existing file
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
 
   // Registering chunk servers in master pool of servers
@@ -41,15 +35,22 @@ message RegisterChunkServerResponse {
 // Request to get chunk location from the Master Server
 message GetChunkRequest {
   string file_name = 1;
-  int32 chunk_index = 2;
 }
 
-// Response containing chunk locations
+
+message ChunkLocation {
+    string chunk_id = 1;
+    repeated string servers = 2;
+    int64 chunk_size = 3;
+    string chunk_hash = 4;
+}
+
+
 message GetChunkResponse {
-  string chunk_id = 1;
-  repeated string chunk_servers = 2;
-  bool success = 3;
-  string message = 4;  // ✅ Add this field
+    string file_id = 1;
+    repeated ChunkLocation chunk_locations = 2;
+    bool success = 3;
+    string message = 4;
 }
 
 
@@ -75,9 +76,6 @@ message RegisterFileResponse {
   bool success = 5;
   string message = 6;
 }
-
-
-
 
 message ChunkServers {
   repeated string servers = 1;

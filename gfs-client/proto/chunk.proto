@@ -7,11 +7,30 @@ option go_package = "./";
 // ChunkService handles chunk uploads and downloads
 service ChunkService {
   // Client uploads a chunk to a chunk server
-  rpc UploadChunk(stream ChunkData) returns (ChunkResponse);
+  rpc UploadChunk (stream ChunkUploadRequest) returns (ChunkUploadResponse);
 
   // Client downloads a chunk from a chunk server
   rpc DownloadChunk(ChunkRequest) returns (stream ChunkData);
 }
+
+
+message ChunkUploadRequest {
+  string file_id = 1;        // Unique identifier for the file
+  string chunk_id = 2;       // Unique identifier for the chunk
+  bytes data = 3;            // Chunk data
+  string leader = 4;         // Address of the leader server
+  string follower1 = 5;      // Address of the first follower
+  string follower2 = 6;      // Address of the second follower
+}
+
+message ChunkUploadResponse {
+  bool success = 1;          // Indicates if the upload was successful
+  string message = 2;        // Status message
+  string file_id = 3;        // File identifier for which the chunk belongs
+  string chunk_id = 4;       // The chunk that was uploaded
+}
+
+
 
 // Messages for ChunkService
 message ChunkData {
@@ -21,9 +40,4 @@ message ChunkData {
 
 message ChunkRequest {
   string chunk_id = 1;
-}
-
-message ChunkResponse {
-  bool success = 1;
-  string message = 2;
 }

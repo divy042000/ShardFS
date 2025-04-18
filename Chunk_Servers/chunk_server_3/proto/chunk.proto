@@ -6,22 +6,41 @@ option go_package = "./";
 
 // Chunk Service for handling chunk operations
 service ChunkService {
-  rpc WriteChunk(WriteRequest) returns (WriteResponse);
+  rpc UploadChunk (stream ChunkUploadRequest) returns (ChunkUploadResponse) {}
   rpc ReadChunk(ReadRequest) returns (ReadResponse);
-rpc SendChunk(ReplicationRequest) returns (ReplicationResponse);
+  rpc SendChunk(ReplicationRequest) returns (ReplicationResponse);
 }
 
-// Request for writing a chunk
-message WriteRequest {
-  string chunk_id = 1;
-  bytes data = 2;
-  int32 version = 3;
+
+message ReplicationRequest {
+  string file_id = 1;
+  string chunk_id = 2;
+  bytes data = 3;
+  repeated string followers = 4;
 }
 
-// Response after writing a chunk
-message WriteResponse {
-  bool success = 1;
-  string message = 2;
+
+message ReplicationResponse {
+  bool success = 1;                   
+  string message = 2;                  
+  map<string, bool> status_map = 3;    
+}
+
+
+message ChunkUploadRequest {
+  string file_id = 1;        // Unique identifier for the file
+  string chunk_id = 2;       // Unique identifier for the chunk
+  bytes data = 3;            // Chunk data
+  string leader = 4;         // Address of the leader server
+  string follower1 = 5;      // Address of the first follower
+  string follower2 = 6;      // Address of the second follower
+}
+
+message ChunkUploadResponse {
+  bool success = 1;          // Indicates if the upload was successful
+  string message = 2;        // Status message
+  string file_id = 3;        // File identifier for which the chunk belongs
+  string chunk_id = 4;       // The chunk that was uploaded
 }
 
 // Request for reading a chunk
@@ -35,16 +54,3 @@ message ReadResponse {
   bytes data = 2;
 }
 
-// Request for chunk replication
-message ReplicationRequest {
-  string chunk_id = 1;
-  bytes data = 2;
-  int32 version = 3; // Ensures consistent versioning across replicas
-repeated string followers = 4;
-}
-
-// Response after chunk replication
-message ReplicationResponse {
-  bool success = 1;
-  string message = 2;
-}

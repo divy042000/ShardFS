@@ -1,7 +1,7 @@
 package storage
 
 import (
- //       "log"
+	//       "log"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ChunkMetadata stores checksum and version details for a chunk
@@ -18,9 +19,11 @@ type ChunkMetadata struct {
 }
 
 // WriteChunk stores a chunk on disk, generates a checksum, and saves metadata
-func WriteChunk(storagePath, chunkID string, data []byte, version int) error {
-	chunkPath := filepath.Join(storagePath, chunkID+".chunk")
-	metaPath := filepath.Join(storagePath, chunkID+".meta")
+func WriteChunk(storagePath, chunkID string, data []byte) error {
+	// Sanitize chunkID to prevent directory traversal
+	sanitizedChunkID := strings.ReplaceAll(chunkID, "/", "_") // Replace slashes with underscores
+	chunkPath := filepath.Join(storagePath, sanitizedChunkID+".chunk")
+	metaPath := filepath.Join(storagePath, sanitizedChunkID+".meta")
 
 	// Ensure storage directory exists
 	if err := os.MkdirAll(storagePath, os.ModePerm); err != nil {
@@ -36,7 +39,7 @@ func WriteChunk(storagePath, chunkID string, data []byte, version int) error {
 	}
 
 	// Save metadata
-	metadata := ChunkMetadata{Checksum: checksum, Version: version}
+	metadata := ChunkMetadata{Checksum: checksum}
 	if err := SaveMetadata(metaPath, metadata); err != nil {
 		return fmt.Errorf("failed to save metadata: %w", err)
 	}
@@ -69,31 +72,21 @@ func ComputeChecksum(data []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// SaveMetadata writes metadata to a JSON file
 func SaveMetadata(metaPath string, metadata ChunkMetadata) error {
-	// Serialize metadata to JSON
-	metaDataBytes, err := json.MarshalIndent(metadata, "", "  ")
+	data, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return err
 	}
-
-	// Write metadata atomically
-	return AtomicWriteFile(metaPath, metaDataBytes)
+	return AtomicWriteFile(metaPath, data)
 }
 
-// AtomicWriteFile writes data to a file atomically (ensures data integrity)
 func AtomicWriteFile(filePath string, data []byte) error {
-	tempPath := filePath + ".tmp"
-
-	// Write data to a temporary file
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp file: %w", err)
+	tempFile := filePath + ".tmp"
+	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+		return err
 	}
-
-	// Rename the temp file to final file (atomic operation)
-	return os.Rename(tempPath, filePath)
+	return os.Rename(tempFile, filePath)
 }
-
 
 // ListStoredChunks returns a list of all stored chunk IDs in the storage path
 func ListStoredChunks(storagePath string) ([]string, error) {
@@ -112,4 +105,3 @@ func ListStoredChunks(storagePath string) ([]string, error) {
 
 	return chunkIDs, nil
 }
-

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	pb "chunk_server_1/proto"
-	"chunk_server_1/storage"
-	"chunk_server_1/utils"
+	pb "chunk_server_3/proto"
+	"chunk_server_3/storage"
+	"chunk_server_3/utils"
 
 	"google.golang.org/grpc"
 )

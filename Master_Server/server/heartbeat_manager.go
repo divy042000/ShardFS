@@ -4,10 +4,12 @@ import (
 	"container/heap"
 	"context"
 	"log"
+	pb "master_server/proto"
 	"sync"
 	"time"
 
-	pb "master_server/proto"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // ChunkServerInfo stores heartbeat data for each Chunk Server
@@ -72,20 +74,37 @@ func (pq *PriorityQueue) Pop() interface{} {
 
 // HeartbeatManager tracks active Chunk Servers with a priority queue
 type HeartbeatManager struct {
-	pb.UnimplementedHeartbeatServiceServer                             // ✅ Implements gRPC Interface
-	mu                                     sync.Mutex                  // Mutex for thread safety
-	chunkServers                           map[string]*ChunkServerInfo // Map of Chunk Server IDs to their info
-	pq                                     PriorityQueue               // Priority queue for Chunk Servers
-	ms                                     *MasterServer               // Master Server reference for leader election
+	pb.UnimplementedHeartbeatServiceServer
+	mu           sync.Mutex
+	ChunkServers map[string]*ChunkServerInfo
+	pq           PriorityQueue
+	ms           *MasterServer
+	ScoreWeights ScoreWeights
+}
+
+type ScoreWeights struct {
+	Space   float64
+	CPU     float64
+	Memory  float64
+	Network float64
+	Load    float64
 }
 
 // NewHeartbeatManager initializes a HeartbeatManager
-func NewHeartbeatManager() *HeartbeatManager {
-	pq := make(PriorityQueue, 0) // Initialize the priority queue
-	heap.Init(&pq)               // Initialize the heap
+func NewHeartbeatManager(ms *MasterServer) *HeartbeatManager {
+	pq := make(PriorityQueue, 0)
+	heap.Init(&pq)
 	return &HeartbeatManager{
-		chunkServers: make(map[string]*ChunkServerInfo),
+		ChunkServers: make(map[string]*ChunkServerInfo),
 		pq:           pq,
+		ms:           ms,
+		ScoreWeights: ScoreWeights{
+			Space:   0.4,
+			CPU:     0.25,
+			Memory:  0.15,
+			Network: 0.10,
+			Load:    0.10,
+		},
 	}
 }
 
@@ -94,9 +113,23 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	// Update current server info
+	// Validate Server
+	if !hm.ms.dataManager.IsServerRegistered(req.ServerId) {
+		log.Printf("❌ Heartbeat from unregistered server %s", req.ServerId)
+		return &pb.HeartbeatResponse{
+			Success: false,
+			Message: "❌ Heartbeat from unregistered server",
+		}, nil
+	}
+
+	// Validate chunk_ids
+	if !hm.validateChunkIds(ctx, req.ChunkIds) {
+		log.Printf("❌ Heartbeat from %s with invalid chunk IDs: %v", req.ServerId, req.ChunkIds)
+	}
+
+	// Update chunk server info
 	info := &ChunkServerInfo{
-		ServerID:      req.ServerId, 
+		ServerID:      req.ServerId,
 		FreeSpace:     req.FreeSpace,
 		TotalSpace:    req.TotalSpace,
 		StoredChunks:  req.ChunkIds,
@@ -106,69 +139,82 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 		Load:          req.Load,
 		LastHeartbeat: time.Now(),
 	}
-	hm.chunkServers[req.ServerId] = info
+	hm.ChunkServers[req.ServerId] = info
 
-	// Update dataManager if linked
-    if hm.ms != nil {
-        hm.ms.dataManager.serverSpaces.Lock()
-        hm.ms.dataManager.serverSpaces.m[req.ServerId] = req.FreeSpace
-        hm.ms.dataManager.serverSpaces.Unlock()
-        hm.ms.dataManager.serverLoads.Lock()
-        hm.ms.dataManager.serverLoads.m[req.ServerId] = int64(req.Load * 100) // Scale as needed
-        hm.ms.dataManager.serverLoads.Unlock()
-    }
-	// Compute scheduling score
-	score := calculateScore(info)
+	// Update DataManager
+
+	hm.ms.dataManager.serverSpaces.Lock()
+	hm.ms.dataManager.serverSpaces.m[req.ServerId] = req.FreeSpace
+	hm.ms.dataManager.serverSpaces.Unlock()
+	hm.ms.dataManager.serverLoads.Lock()
+	hm.ms.dataManager.serverLoads.m[req.ServerId] = int64(req.Load * 100)
+	hm.ms.dataManager.serverLoads.Unlock()
+
+	// Compute and Update Score
+	score := hm.calculateScore(info)
 	hm.updateOrPushServerScore(req.ServerId, score, req)
 
-	// Log the heartbeat nicely
+	// Update MongoDB
+	update := bson.M{
+		"$set": bson.M{
+			"server_id":      req.ServerId,
+			"free_space":     req.FreeSpace,
+			"total_space":    req.TotalSpace,
+			"cpu_usage":      req.CpuUsage,
+			"memory_usage":   req.MemoryUsage,
+			"network_usage":  req.NetworkUsage,
+			"load":           req.Load,
+			"chunk_ids":      req.ChunkIds,
+			"last_heartbeat": time.Now().Unix(),
+			"active":         true,
+			"score":          score,
+		},
+	}
+
+	_, err := hm.ms.db.Collection("server_status").UpdateOne(
+		ctx,
+		bson.M{"server_id": req.ServerId},
+		update,
+		options.Update().SetUpsert(true),
+	)
+	if err != nil {
+		log.Printf("❌ Failed to update server status in MongoDB: %v", err)
+	}
+
 	log.Printf(
-		"💓 [%s] Heartbeat received from %s | CPU: %.2f%% | Mem: %.2f%% | Free: %dMB / Total: %dMB | Load: %.2f | Network: %.2fKB/s | Chunks: %d",
-		time.Now().Format("15:04:05"),
-		req.ServerId,
-		req.CpuUsage,
-		req.MemoryUsage,
-		req.FreeSpace,
-		req.TotalSpace,
-		req.Load,
-		req.NetworkUsage,
-		len(req.ChunkIds),
+		"💓 Heartbeat [%s]: CPU=%.2f%%, Mem=%.2f%%, Free=%dB, Total=%dB, Load=%.2f, Net=%.2fKB/s, Chunks=%d, Score=%.3f",
+		req.ServerId, req.CpuUsage, req.MemoryUsage, req.FreeSpace, req.TotalSpace, req.Load, req.NetworkUsage, len(req.ChunkIds), score,
 	)
 
 	return &pb.HeartbeatResponse{
 		Success: true,
 		Message: "✅ Heartbeat received successfully",
 	}, nil
+
 }
 
-func (hm *HeartbeatManager) updateOrPushServerScore(serverID string, score float64, req *pb.HeartbeatRequest) {
-	for i, item := range hm.pq {
-		if item.ServerID == serverID {
-			hm.pq[i].Score = score
-			hm.pq[i].FreeSpace = req.FreeSpace
-			hm.pq[i].CPUUsage = req.CpuUsage
-			hm.pq[i].MemoryUsage = req.MemoryUsage
-			hm.pq[i].NetworkUsage = req.NetworkUsage
-			hm.pq[i].Load = req.Load
-			heap.Fix(&hm.pq, i)
-			return
+// validateChunkIds checks if the chunk IDs are valid
+func (hm *HeartbeatManager) validateChunkIds(ctx context.Context, chunkIds []string) bool {
+	for _, chunkId := range chunkIds {
+		var metadata FileMetadata
+		err := hm.ms.db.Collection("file_metadata").FindOne(ctx, bson.M{"chunk_assignments": bson.M{"$exists": true}}).Decode(&metadata)
+		if err != nil {
+			continue
+		}
+
+		// Iterate over ChunkAssignments which is a slice of ChunkPacket
+		for _, packet := range metadata.ChunkAssignments {
+			// Check if the chunkId matches the FileID or ChunkIndex (based on your logic)
+			if packet.FileID == chunkId || string(packet.ChunkIndex) == chunkId {
+				return true
+			}
 		}
 	}
-
-	// Not found — push new
-	heap.Push(&hm.pq, &ServerScore{
-		ServerID:     serverID,
-		Score:        score,
-		FreeSpace:    req.FreeSpace,
-		CPUUsage:     req.CpuUsage,
-		MemoryUsage:  req.MemoryUsage,
-		NetworkUsage: req.NetworkUsage,
-		Load:         req.Load,
-	})
+	return len(chunkIds) == 0
 }
 
-// calculate score computes a score comprising of available metric score out of heartbeat
-func calculateScore(info *ChunkServerInfo) float64 {
+// calculateScore computes a server score
+func (hm *HeartbeatManager) calculateScore(info *ChunkServerInfo) float64 {
 	spaceScore := float64(info.FreeSpace) / float64(info.TotalSpace)
 	computeScore := (100.0 - float64(info.CPUUsage)) / 100.0
 	memoryScore := (100.0 - float64(info.MemoryUsage)) / 100.0
@@ -180,18 +226,51 @@ func calculateScore(info *ChunkServerInfo) float64 {
 			loadScore = 1.0
 		}
 	}
-	return 0.4*spaceScore + 0.25*computeScore + 0.15*memoryScore + 0.10*networkScore + 0.10*loadScore
+	w := hm.ScoreWeights
+	return w.Space*spaceScore + w.CPU*computeScore + w.Memory*memoryScore + w.Network*networkScore + w.Load*loadScore
 }
 
-// RemoveInactiveServers clears out inactive Chunk Servers (no heartbeat in 30s)
+// updateOrPushServerScore updates or pushes a server score in the priority queue
+func (hm *HeartbeatManager) updateOrPushServerScore(serverID string, score float64, req *pb.HeartbeatRequest) {
+	log.Printf("📊 Updating score for %s, initial pq size: %d", serverID, len(hm.pq))
+	for i, item := range hm.pq {
+		if item.ServerID == serverID {
+			log.Printf("📊 Updating existing server %s at index %d", serverID, i)
+			hm.pq[i].Score = score
+			hm.pq[i].FreeSpace = req.FreeSpace
+			hm.pq[i].CPUUsage = req.CpuUsage
+			hm.pq[i].MemoryUsage = req.MemoryUsage
+			hm.pq[i].NetworkUsage = req.NetworkUsage
+			hm.pq[i].Load = req.Load
+			heap.Fix(&hm.pq, i)
+			log.Printf("📊 Fixed heap for %s, new pq size: %d", serverID, len(hm.pq))
+			return
+		}
+	}
+	log.Printf("📊 Pushing new server %s to pq", serverID)
+	heap.Push(&hm.pq, &ServerScore{
+		ServerID:     serverID,
+		Score:        score,
+		FreeSpace:    req.FreeSpace,
+		CPUUsage:     req.CpuUsage,
+		MemoryUsage:  req.MemoryUsage,
+		NetworkUsage: req.NetworkUsage,
+		Load:         req.Load,
+	})
+	log.Printf("📊 Pushed to heap, new pq size: %d", len(hm.pq))
+}
+
+// RemoveInactiveServers removes inactive Chunk Servers (no heartbeat in 30s)
 func (hm *HeartbeatManager) RemoveInactiveServers() {
 	for {
 		time.Sleep(10 * time.Second) // Check every 10s
 		hm.mu.Lock()
-		for id, server := range hm.chunkServers {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for id, server := range hm.ChunkServers {
 			if time.Since(server.LastHeartbeat) > 30*time.Second {
 				log.Printf("⚠️  Chunk Server %s is INACTIVE! Removing from active list.", id)
-				delete(hm.chunkServers, id)
+				delete(hm.ChunkServers, id)
 				// Remove from priority queue
 				for i, item := range hm.pq {
 					if item.ServerID == id {
@@ -199,40 +278,51 @@ func (hm *HeartbeatManager) RemoveInactiveServers() {
 						break
 					}
 				}
-			}
-			// Update dataManager if linked
-			if hm.ms != nil {
-				hm.ms.dataManager.serverLoads.Lock()
-				delete(hm.ms.dataManager.serverLoads.m, id)
-				hm.ms.dataManager.serverLoads.Unlock()
+				// Update MongoDB
+				_, err := hm.ms.db.Collection("server_status").UpdateOne(
+					ctx,
+					bson.M{"server_id": id},
+					bson.M{"$set": bson.M{"active": false}},
+					options.Update().SetUpsert(true),
+				)
+				if err != nil {
+					log.Printf("❌ Failed to update server status in MongoDB: %v", err)
+				}
+				// Update dataManager if linked
 				hm.ms.dataManager.serverSpaces.Lock()
 				delete(hm.ms.dataManager.serverSpaces.m, id)
 				hm.ms.dataManager.serverSpaces.Unlock()
+				hm.ms.dataManager.serverLoads.Lock()
+				delete(hm.ms.dataManager.serverLoads.m, id)
+				hm.ms.dataManager.serverLoads.Unlock()
+				hm.ms.dataManager.RemoveServer(id)
+
 			}
 		}
 		hm.mu.Unlock()
 	}
 }
 
-// GetActiveChunkServers filters out inactive servers
+// GetActiveChunkServers returns active servers
 func (hm *HeartbeatManager) GetActiveChunkServers(servers []string) []string {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
-
 	var activeServers []string
-	for _, serverID := range servers { 
-		if _, exists := hm.chunkServers[serverID]; exists {
+	for _, serverID := range servers {
+		if _, exists := hm.ChunkServers[serverID]; exists {
 			activeServers = append(activeServers, serverID)
 		}
 	}
 	return activeServers
 }
 
-
-// IsChunkServerActive checks if a chunk server is active
 func (hm *HeartbeatManager) IsChunkServerActive(serverID string) bool {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-	_, exists := hm.chunkServers[serverID]
-	return exists
+    hm.mu.Lock()
+    defer hm.mu.Unlock()
+    info, exists := hm.ChunkServers[serverID]
+    if !exists {
+        return false
+    }
+    // Consider server inactive if last heartbeat is older than 30 seconds
+    return time.Since(info.LastHeartbeat) < 30*time.Second
 }

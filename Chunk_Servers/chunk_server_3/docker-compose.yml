@@ -11,7 +11,7 @@ services:
     environment:
       - SERVER_ID=chunk_server_3
       - STORAGE_PATH=/chunk_server_3/data
-      - CHUNK_SERVER_ADDRESS=chunk_server_container:50054  # Use container name
+      - CHUNK_SERVER_ADDRESS=chunk_server_container_3:50054  # Use container name
       - MASTER_ADDRESS=master_server_container:50052  # Use container name
     volumes:
       - chunk_data:/data

@@ -3,7 +3,7 @@ package main
 import (
     "log"
     "os"
-    "chunk_server_1/server"
+    "chunk_server_3/server"
 )
 
 func main() {
@@ -17,6 +17,11 @@ func main() {
         storagePath = "/data/chunks"
     }
 
+    selfAddress := os.Getenv("CHUNK_SERVER_ADDRESS")
+	if selfAddress == "" {
+		log.Fatal("❌ CHUNK_SERVER_ADDRESS not set")
+	}
+
     masterAddress := os.Getenv("MASTER_ADDRESS")
     if masterAddress == "" {
         masterAddress = "master-server:50052"
@@ -28,7 +33,7 @@ func main() {
         log.Fatalf("❌ Failed to create storage directory: %v", err)
     }
 
-    chunkServer := server.NewChunkServer(serverID, storagePath, masterAddress, workerCount)
+    chunkServer := server.NewChunkServer(serverID, storagePath, masterAddress, selfAddress ,workerCount)
     chunkServer.Start()
 
     select {}

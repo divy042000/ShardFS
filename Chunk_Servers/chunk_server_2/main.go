@@ -1,35 +1,40 @@
 package main
 
 import (
-    "log"
-    "os"
-    "chunk_server_1/server"
+	"chunk_server_2/server"
+	"log"
+	"os"
 )
 
 func main() {
-    serverID := os.Getenv("SERVER_ID")
-    if serverID == "" {
-        serverID = "chunk_server_2"
-    }
+	serverID := os.Getenv("SERVER_ID")
+	if serverID == "" {
+		serverID = "chunk_server_2"
+	}
 
-    storagePath := os.Getenv("STORAGE_PATH")
-    if storagePath == "" {
-        storagePath = "/data/chunks"
-    }
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "/data/chunks"
+	}
 
-    masterAddress := os.Getenv("MASTER_ADDRESS")
-    if masterAddress == "" {
-        masterAddress = "master-server:50052"
-    }
+	selfAddress := os.Getenv("CHUNK_SERVER_ADDRESS")
+	if selfAddress == "" {
+		log.Fatal("❌ CHUNK_SERVER_ADDRESS not set")
+	}
 
-    workerCount := 5
+	masterAddress := os.Getenv("MASTER_ADDRESS")
+	if masterAddress == "" {
+		masterAddress = "master-server:50052"
+	}
 
-    if err := os.MkdirAll(storagePath, os.ModePerm); err != nil {
-        log.Fatalf("❌ Failed to create storage directory: %v", err)
-    }
+	workerCount := 5
 
-    chunkServer := server.NewChunkServer(serverID, storagePath, masterAddress, workerCount)
-    chunkServer.Start()
+	if err := os.MkdirAll(storagePath, os.ModePerm); err != nil {
+		log.Fatalf("❌ Failed to create storage directory: %v", err)
+	}
 
-    select {}
+	chunkServer := server.NewChunkServer(serverID, storagePath, masterAddress,selfAddress,workerCount)
+	chunkServer.Start()
+
+	select {}
 }

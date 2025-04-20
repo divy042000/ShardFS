@@ -122,10 +122,10 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 		}, nil
 	}
 
-	// Validate chunk_ids
-	if !hm.validateChunkIds(ctx, req.ChunkIds) {
-		log.Printf("❌ Heartbeat from %s with invalid chunk IDs: %v", req.ServerId, req.ChunkIds)
-	}
+	// // Validate chunk_ids
+	// if !hm.validateChunkIds(ctx, req.ChunkIds) {
+	// 	log.Printf("❌ Heartbeat from %s with invalid chunk IDs: %v", req.ServerId, req.ChunkIds)
+	// }
 
 	// Update chunk server info
 	info := &ChunkServerInfo{
@@ -193,25 +193,25 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 
 }
 
-// validateChunkIds checks if the chunk IDs are valid
-func (hm *HeartbeatManager) validateChunkIds(ctx context.Context, chunkIds []string) bool {
-	for _, chunkId := range chunkIds {
-		var metadata FileMetadata
-		err := hm.ms.db.Collection("file_metadata").FindOne(ctx, bson.M{"chunk_assignments": bson.M{"$exists": true}}).Decode(&metadata)
-		if err != nil {
-			continue
-		}
+// // validateChunkIds checks if the chunk IDs are valid
+// func (hm *HeartbeatManager) validateChunkIds(ctx context.Context, chunkIds []string) bool {
+// 	for _, chunkId := range chunkIds {
+// 		var metadata FileMetadata
+// 		err := hm.ms.db.Collection("file_metadata").FindOne(ctx, bson.M{"chunk_assignments": bson.M{"$exists": true}}).Decode(&metadata)
+// 		if err != nil {
+// 			continue
+// 		}
 
-		// Iterate over ChunkAssignments which is a slice of ChunkPacket
-		for _, packet := range metadata.ChunkAssignments {
-			// Check if the chunkId matches the FileID or ChunkIndex (based on your logic)
-			if packet.FileID == chunkId || string(packet.ChunkIndex) == chunkId {
-				return true
-			}
-		}
-	}
-	return len(chunkIds) == 0
-}
+// 		// Iterate over ChunkAssignments which is a slice of ChunkPacket
+// 		for _, packet := range metadata.ChunkAssignments {
+// 			// Check if the chunkId matches the FileID or ChunkIndex (based on your logic)
+// 			if packet.FileID == chunkId || string(packet.ChunkIndex) == chunkId {
+// 				return true
+// 			}
+// 		}
+// 	}
+// 	return len(chunkIds) == 0
+// }
 
 // calculateScore computes a server score
 func (hm *HeartbeatManager) calculateScore(info *ChunkServerInfo) float64 {

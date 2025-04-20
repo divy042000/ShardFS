@@ -1,14 +1,14 @@
 package server
 
 import (
-	"log"
+	pb "chunk_server_3/proto"
 	"context"
 	"fmt"
+	"log"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	pb "chunk_server_3/proto"
 )
-
 
 type ReplicationManager struct {
 	chunkServer *ChunkServer
@@ -18,13 +18,14 @@ func NewReplicationManager(cs *ChunkServer) *ReplicationManager {
 	return &ReplicationManager{chunkServer: cs}
 }
 
-
 func (rm *ReplicationManager) StartReplication(req *pb.ReplicationRequest, currentIndex int) (*pb.ReplicationResponse, error) {
-	log.Printf("🚀 [StartReplication] Starting replication at index %d for chunk '%s' (file '%s')", currentIndex, req.ChunkId, req.FileId)
+	log.Printf("🚀 [StartReplication] Starting replication at index %d for chunk (hash: %s, index: %d, file: '%s')",
+		currentIndex, req.ChunkHash, req.ChunkIndex, req.FileId)
 
 	// Base case: all followers have been processed
 	if currentIndex >= len(req.Followers) {
-		log.Printf("✅ [StartReplication] No more followers to replicate chunk '%s'", req.ChunkId)
+		log.Printf("✅ [StartReplication] No more followers to replicate chunk (hash: %s, index: %d)",
+			req.ChunkHash, req.ChunkIndex)
 		return &pb.ReplicationResponse{
 			Success:   true,
 			Message:   "Replication chain complete",
@@ -52,15 +53,17 @@ func (rm *ReplicationManager) StartReplication(req *pb.ReplicationRequest, curre
 
 	client := pb.NewChunkServiceClient(conn)
 
-	log.Printf("📤 [StartReplication] Sending chunk '%s' to follower '%s'", req.ChunkId, target)
+	log.Printf("📤 [StartReplication] Sending chunk (hash: %s, index: %d) to follower '%s'",
+		req.ChunkHash, req.ChunkIndex, target)
+
 	resp, err := client.SendChunk(context.Background(), req)
 	if err != nil {
 		log.Printf("❌ [StartReplication] RPC to follower '%s' failed: %v", target, err)
 		return nil, fmt.Errorf("error sending chunk to follower %s: %v", target, err)
 	}
 
-	log.Printf("📬 [StartReplication] Received response from follower '%s': success=%v, message='%s'", target, resp.Success, resp.Message)
+	log.Printf("📬 [StartReplication] Received response from follower '%s': success=%v, message='%s'",
+		target, resp.Success, resp.Message)
+
 	return resp, nil
 }
-
-

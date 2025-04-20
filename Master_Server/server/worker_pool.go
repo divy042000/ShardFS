@@ -12,24 +12,26 @@ const (
 	RegisterFileJob
 	AssignChunksJob
 	ReportChunkJob
-	GetChunkLocationsJob
+	GetFileMetadataJob
 	HeartbeatJob
+	DeleteFileJob
+	DeleteReplicaJob
 )
 
 // Job represents a task to be executed by a worker pool
 
-type Job struct {
-	Type JobType	
-	Data interface{} // Data can be any type, depending on the job type
-	Response chan interface{} // Channel to send the response back to the caller		
-}
+	type Job struct {
+		Type JobType	
+		Data interface{} // Data can be any type, depending on the job type
+		Response chan interface{} // Channel to send the response back to the caller		
+	}
 
-// JobResult holds the result of a job
-type JobResult struct {
-   Success bool
-   Data interface{} // Result data
-   Error error
-}
+	// JobResult holds the result of a job
+	type JobResult struct {
+	Success bool
+	Data interface{} // Result data
+	Error error
+	}
 
 
 type WorkerPool struct{

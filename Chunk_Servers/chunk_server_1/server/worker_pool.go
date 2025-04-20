@@ -1,6 +1,7 @@
 package server
 
 import (
+	pb "chunk_server_1/proto"
 	"chunk_server_1/storage"
 	"log"
 	"os"
@@ -18,9 +19,10 @@ const (
 type Job struct {
 	Type         JobType
 	ChunkID      string
+	FileId       string
 	Data         []byte
-	CurrentIndex int
 	Followers    []string
+	CurrentIndex int
 	Response     chan JobResult
 }
 
@@ -37,17 +39,14 @@ type WorkerPool struct {
 	replicationManager *ReplicationManager
 }
 
-func NewWorkerPool(workerCount int, queueSize int) *WorkerPool {
+func NewWorkerPool(workerCount int, queueSize int, rm *ReplicationManager) *WorkerPool {
 	wp := &WorkerPool{
-		workerCount: workerCount,
-		jobQueue:    make(chan Job, queueSize),
+		workerCount:        workerCount,
+		jobQueue:           make(chan Job, queueSize),
+		replicationManager: rm,
 	}
 	wp.startWorkers()
 	return wp
-}
-
-func (wp *WorkerPool) ReplicateChunk(chunkID string, data []byte, followers []string, version int) error {
-	return wp.replicationManager.ReplicateChunk(chunkID, data, followers, version)
 }
 
 func (wp *WorkerPool) startWorkers() {
@@ -59,66 +58,74 @@ func (wp *WorkerPool) startWorkers() {
 
 func (wp *WorkerPool) worker(workerID int) {
 	defer wp.wg.Done()
+
 	for job := range wp.jobQueue {
-		log.Printf("[Worker %d] Processing job: %v for chunk %s", workerID, job.Type, job.ChunkID)
+		log.Printf("👷 [Worker %d] Processing job: %v for chunk '%s'", workerID, job.Type, job.ChunkID)
 		var result JobResult
 
 		switch job.Type {
 		case WriteJob:
-			// Read STORAGE_PATH from environment, fallback to "/data" if not set
 			storagePath := os.Getenv("STORAGE_PATH")
 			if storagePath == "" {
-				storagePath = "/data" // Default fallback
-				log.Printf("⚠️ STORAGE_PATH not set, using default: %s", storagePath)
-			} else {
-				log.Printf("📂 Using STORAGE_PATH: %s", storagePath)
+				storagePath = "/data"
+				log.Printf("⚠️ [Worker %d] STORAGE_PATH not set, using default: %s", workerID, storagePath)
 			}
 
-			// Attempt to write the chunk
 			err := storage.WriteChunk(storagePath, job.ChunkID, job.Data)
 			if err != nil {
-				log.Printf("❌ Failed to write chunk %s to %s: %v", job.ChunkID, storagePath, err)
+				log.Printf("❌ [Worker %d] Failed to write chunk '%s': %v", workerID, job.ChunkID, err)
 				result = JobResult{Success: false, Message: err.Error()}
 			} else {
-				log.Printf("✅ Chunk %s written successfully to %s", job.ChunkID, storagePath)
-				result = JobResult{Success: true, Message: "Write operation complete"}
+				log.Printf("✅ [Worker %d] Chunk '%s' written successfully", workerID, job.ChunkID)
+				result = JobResult{Success: true, Message: "Write complete"}
 			}
 			job.Response <- result
+
 		case ReadJob:
-			// Read STORAGE_PATH from environment, fallback to "/data" if not set
 			storagePath := os.Getenv("STORAGE_PATH")
 			if storagePath == "" {
-				storagePath = "/data" // Default fallback
-				log.Printf("⚠️ STORAGE_PATH not set, using default: %s", storagePath)
-			} else {
-				log.Printf("📂 Using STORAGE_PATH: %s", storagePath)
+				storagePath = "/data"
+				log.Printf("⚠️ [Worker %d] STORAGE_PATH not set, using default: %s", workerID, storagePath)
 			}
 
-			// Attempt to read the chunk
 			data, err := storage.ReadChunk(storagePath, job.ChunkID)
 			if err != nil {
-				log.Printf("❌ Failed to read chunk %s from %s: %v", job.ChunkID, storagePath, err)
+				log.Printf("❌ [Worker %d] Failed to read chunk '%s': %v", workerID, job.ChunkID, err)
 				result = JobResult{Success: false, Data: nil, Message: err.Error()}
 			} else {
-				log.Printf("✅ Chunk %s read successfully from %s", job.ChunkID, storagePath)
-				result = JobResult{Success: true, Data: data, Message: "Read operation complete"}
+				log.Printf("✅ [Worker %d] Chunk '%s' read successfully", workerID, job.ChunkID)
+				result = JobResult{Success: true, Data: data, Message: "Read complete"}
 			}
 			job.Response <- result
+
 		case ReplicationJob:
-			err := wp.replicationManager.ReplicateChunk(job.ChunkID, job.Data, job.Followers, job.CurrentIndex)
-			if err != nil {
-				log.Printf("❌ Replication failed for chunk %s to follower at index %d: %v", job.ChunkID, job.CurrentIndex, err)
-				result = JobResult{Success: false, Message: err.Error()}
-			} else {
-				log.Printf("✅ Replicated chunk %s to follower at index %d", job.ChunkID, job.CurrentIndex)
-				result = JobResult{Success: true, Message: "Replication complete"}
+			log.Printf("🔁 [Worker %d] Starting replication for chunk '%s' at index %d", workerID, job.ChunkID, job.CurrentIndex)
+
+			replicationReq := &pb.ReplicationRequest{
+				FileId:    job.FileId,
+				ChunkId:   job.ChunkID,
+				Data:      job.Data,
+				Followers: job.Followers,
 			}
+
+			resp, err := wp.replicationManager.StartReplication(replicationReq, job.CurrentIndex)
+			if err != nil {
+				log.Printf("❌ [Worker %d] Replication error for chunk '%s': %v", workerID, job.ChunkID, err)
+				result = JobResult{Success: false, Message: err.Error()}
+			} else if !resp.Success {
+				log.Printf("⚠️ [Worker %d] Replication failed for chunk '%s': %s", workerID, job.ChunkID, resp.Message)
+				result = JobResult{Success: false, Message: resp.Message}
+			} else {
+				log.Printf("✅ [Worker %d] Replication successful for chunk '%s'", workerID, job.ChunkID)
+				result = JobResult{Success: true, Message: "Replication successful"}
+			}
+			job.Response <- result
 		}
-		job.Response <- result
 	}
 }
 
 func (wp *WorkerPool) SubmitJob(job Job) {
+	log.Printf("📨 [Pool] Job submitted: %v for chunk '%s'", job.Type, job.ChunkID)
 	wp.jobQueue <- job
 }
 

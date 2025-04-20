@@ -79,13 +79,13 @@ var writeCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		log.Printf("[write.go][DEBUG] Registering file with master")
+		// Register the file and get the chunk assignments
 		resp, err := cl.RegisterFile(ctx, meta.ToProto())
 		if err != nil {
-			log.Printf("[write.go][ERROR] Failed to register file: %v", err)
+			log.Printf("❌ [write.go] Failed to register file: %v", err)
 			return
 		}
-
-		fmt.Printf("[write.go][INFO] File registered: FileID=%s\n", resp.FileId)
+		log.Printf("📦 [write.go] File registered: FileID=%s", resp.FileId)
 
 		// Upload chunks in parallel
 		var wg sync.WaitGroup
@@ -95,67 +95,72 @@ var writeCmd = &cobra.Command{
 			wg.Add(1)
 			go func(index int, chunk chunking.Chunk) {
 				defer wg.Done()
-				log.Printf("[write.go][DEBUG] Preparing to upload chunk %d", index)
 
-				chunkID := fmt.Sprintf("%v", resp.ChunkAssignments[int32(index)])
-				log.Printf("[write.go][DEBUG] Assigned chunkID: %s", chunkID)
-
-				leaderServers, ok := resp.ChunkAssignments[int32(index)]
-				if !ok {
-					errChan <- fmt.Errorf("no chunk server assigned for chunk %d", index)
-					log.Printf("[write.go][ERROR] No chunk server assigned for chunk %d", index)
+				log.Printf("⏳ [write.go] Preparing to upload chunk %d", index)
+				// Retrieve the chunk assignment and leader server
+				chunkServer := resp.ChunkAssignments[int32(index)]
+				leaderAddr := chunkServer.Leader
+				if leaderAddr == "" {
+					errChan <- fmt.Errorf("❌ [write.go] No leader server available for chunk %d", index)
 					return
 				}
-				if len(leaderServers.Servers) == 0 {
-					errChan <- fmt.Errorf("no leader server available for chunk %d", index)
-					log.Printf("[write.go][ERROR] Leader server list is empty for chunk %d", index)
-					return
-				}
-				leaderAddr := leaderServers.Servers[0]
-				log.Printf("[write.go][DEBUG] Leader server for chunk %d: %s", index, leaderAddr)
+				log.Printf("🎯 [write.go] Leader server for chunk %d: %s", index, leaderAddr)
 
-				// Get replica servers
+				// Get replica servers for redundancy
 				var follower1, follower2 string
-				if replicas, ok := resp.ReplicationMap[int32(index)]; ok {
-					if len(replicas.Servers) > 0 {
-						follower1 = replicas.Servers[0]
-					}
-					if len(replicas.Servers) > 1 {
-						follower2 = replicas.Servers[1]
-					}
-					log.Printf("[write.go][DEBUG] Replication targets for chunk %d: %s, %s", index, follower1, follower2)
-				} else {
-					log.Printf("[write.go][DEBUG] No replication info for chunk %d", index)
+				if len(chunkServer.Replicas) > 0 {
+					follower1 = chunkServer.Replicas[0]
 				}
+				if len(chunkServer.Replicas) > 1 {
+					follower2 = chunkServer.Replicas[1]
+				}
+				log.Printf("🔄 [write.go] Replication targets for chunk %d: %s, %s", index, follower1, follower2)
 
-				log.Printf("[write.go][DEBUG] Uploading chunk %d to leader %s", index, leaderAddr)
-				err := cl.UploadChunk(resp.FileId, leaderAddr, chunkID, chunk.Data, follower1, follower2, 3)
-				if err != nil {
-					errChan <- fmt.Errorf("failed to upload chunk %d: %v", index, err)
-					log.Printf("[write.go][ERROR] Chunk %d upload failed: %v", index, err)
+				// Retrieve the chunk hash
+				chunkHash := resp.ChunkAssignments[int32(index)].ChunkHash
+				if chunkHash == "" {
+					errChan <- fmt.Errorf("❌ [write.go] Missing chunk hash for chunk %d", index)
 					return
 				}
-
-				log.Printf("[write.go][INFO] Successfully uploaded chunk %d to leader %s", index, leaderAddr)
+				log.Printf("📋 [write.go] Chunk hash for chunk %d: %s", index, chunkHash)
+			    chunkIndex := resp.ChunkAssignments[int32(index)].ChunkIndex
+				log.Printf("📦 [write.go] Chunk index for chunk %d: %d", index, chunkIndex)
+				// Retry mechanism for chunk upload
+				uploadAttempts := 3
+				var uploadError error
+				for attempt := 1; attempt <= uploadAttempts; attempt++ {
+					log.Printf("🔄 [write.go] Uploading chunk %d (hash: %s), attempt %d/%d to leader %s", index, chunkHash, attempt, uploadAttempts, leaderAddr)
+					uploadError = cl.UploadChunk(resp.FileId, leaderAddr, chunkIndex, chunk.Data, follower1, follower2, chunkHash, uploadAttempts)
+					if uploadError == nil {
+						log.Printf("✅ [write.go] Successfully uploaded chunk %d to leader %s", index, leaderAddr)
+						break
+					}
+					log.Printf("❌ [write.go] Chunk %d upload attempt %d failed: %v", index, attempt, uploadError)
+					if attempt == uploadAttempts {
+						errChan <- fmt.Errorf("❌ [write.go] Failed to upload chunk %d after %d attempts: %v", index, uploadAttempts, uploadError)
+					}
+				}
 			}(i, chunk)
 		}
 
-		// Wait for uploads and check for errors
+		// Wait for all uploads and handle errors
 		wg.Wait()
 		close(errChan)
+
 		hasErrors := false
 		for err := range errChan {
 			if err != nil {
-				log.Printf("[write.go][ERROR] Upload error: %v", err)
+				log.Printf("❌ [write.go] Upload error: %v", err)
 				hasErrors = true
 			}
 		}
+
 		if hasErrors {
-			log.Printf("[write.go][ERROR] File upload encountered one or more errors")
+			log.Printf("❌ [write.go] File upload encountered errors")
 			return
 		}
 
-		fmt.Println("[write.go][INFO] File write completed successfully")
+		log.Printf("🎉 [write.go] File write completed successfully")
 	},
 }
 

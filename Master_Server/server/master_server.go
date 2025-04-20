@@ -30,15 +30,6 @@ type MasterServer struct {
 	workerPool      *WorkerPool
 }
 
-// convertToReplicaServers converts a map[int32]*pb.ChunkServers to map[int32]*pb.ReplicaServers
-func convertToReplicaServers(chunkServersMap map[int32]*pb.ChunkServers) map[int32]*pb.ReplicaServers {
-	replicaServersMap := make(map[int32]*pb.ReplicaServers)
-	for key, chunkServers := range chunkServersMap {
-		replicaServersMap[key] = &pb.ReplicaServers{Servers: chunkServers.Servers}
-	}
-	return replicaServersMap
-}
-
 type SafeMap struct {
 	mu sync.RWMutex
 	m  map[string]interface{}
@@ -70,6 +61,11 @@ type DataManager struct {
 	clientFileMap    *SafeMap
 	fileMetadata     *SafeMap
 	MaxChunksPerFile int
+}
+
+type ReplicaDeleteInfo struct {
+	ChunkID      string
+	ReplicaAddrs []string
 }
 
 func NewDataManager() *DataManager {
@@ -104,19 +100,19 @@ func (dm *DataManager) RemoveServer(serverID string) {
 }
 
 type FileMetadata struct {
-	ID               string             `bson:"_id"`
-	FileName         string             `bson:"file_name"`
-	ClientId         string             `bson:"client_id"`
-	TotalSize        int64              `bson:"total_size"`
-	ChunkCount       int32              `bson:"chunk_count"`
-	ChunkSizes       []int64            `bson:"chunk_sizes"`
-	ChunkHashes      []string           `bson:"chunk_hashes"`
-	Timestamp        int64              `bson:"timestamp"`
-	Priority         int32              `bson:"priority"`
-	RedundancyLevel  int32              `bson:"redundancy_level"`
-	CompressionUsed  bool               `bson:"compression_used"`
-	ChunkAssignments []ChunkPacket      `bson:"chunk_assignments"`
-	ReplicationMap   map[int32][]string `bson:"replication_map"`
+	ID               string        `bson:"_id"`
+	FileFormat       string        `bson:"file_format"`
+	FileName         string        `bson:"file_name"`
+	ClientId         string        `bson:"client_id"`
+	TotalSize        int64         `bson:"total_size"`
+	ChunkCount       int32         `bson:"chunk_count"`
+	ChunkSizes       []int64       `bson:"chunk_sizes"`
+	ChunkHashes      []string      `bson:"chunk_hashes"`
+	Timestamp        int64         `bson:"timestamp"`
+	Priority         int32         `bson:"priority"`
+	RedundancyLevel  int32         `bson:"redundancy_level"`
+	CompressionUsed  bool          `bson:"compression_used"`
+	ChunkAssignments []ChunkPacket `bson:"chunk_assignments"`
 }
 
 type ClientResponse struct {
@@ -298,89 +294,180 @@ func NewMasterServer() (*MasterServer, error) {
 				Data:    &pb.ChunkResponse{Success: true, Message: "Chunk reported"},
 			}
 
-		case GetChunkLocationsJob:
-			req, ok := job.Data.(*pb.GetChunkRequest)
-			if !ok {
-				log.Printf("❌ Invalid data type for GetChunkLocationsJob: %T", job.Data)
+		case DeleteFileJob:
+			req := job.Data.(*pb.DeleteFileRequest)
+			log.Printf("📂 [DeleteFileJob] Starting deletion of '%s' for client '%s'", req.FileName, req.ClientId)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			var metadata FileMetadata
+			err := ms.db.Collection("file_metadata").FindOne(ctx, bson.M{"file_name": req.FileName}).Decode(&metadata)
+			if err != nil {
+				log.Printf("❌ [DeleteFileJob] File metadata not found for '%s': %v", req.FileName, err)
+				job.Response <- JobResult{
+					Success: false,
+					Data: &pb.DeleteFileResponse{
+						Success:  false,
+						ClientId: req.ClientId,
+						Message:  "File not found",
+					},
+					Error: fmt.Errorf("file not found"),
+				}
 				return JobResult{
 					Success: false,
-					Data: &pb.GetChunkResponse{
+					Error:   fmt.Errorf("file not found"),
+					Data: &pb.DeleteFileResponse{
+						Success:  false,
+						ClientId: req.ClientId,
+						Message:  "File not found",
+					},
+				}
+			}
+
+			log.Printf("🔍 [DeleteFileJob] Metadata found: %+v", metadata)
+
+			// Step 1: Delete chunks from leader
+			for index, assignment := range metadata.ChunkAssignments {
+				chunkID := fmt.Sprintf("%s_%d", assignment.ChunkHash, index)
+				log.Printf("🗑️ [DeleteFileJob] Deleting chunk %s from leader %s", chunkID, assignment.LeaderAddress)
+
+				go func(chunkID, leader string) {
+					err := sendChunkDeleteRequest(leader, chunkID)
+					if err != nil {
+						log.Printf("⚠️ [DeleteFileJob] Failed to delete chunk %s from leader %s: %v", chunkID, leader, err)
+					} else {
+						log.Printf("✅ [DeleteFileJob] Chunk %s deleted from leader %s", chunkID, leader)
+					}
+				}(chunkID, assignment.LeaderAddress)
+
+				replicaResp := make(chan JobResult, 1)
+				replicaJob := Job{
+					Type: DeleteReplicaJob,
+					Data: ReplicaDeleteInfo{
+						ChunkID:      chunkID,
+						ReplicaAddrs: assignment.ReplicaAddresses,
+					},
+				}
+				log.Printf("📨 [DeleteFileJob] Submitting DeleteReplicaJob for chunk %s", chunkID)
+				ms.workerPool.SubmitJob(replicaJob)
+
+				// 🔄 Wait for DeleteReplicaJob to finish
+				go func(chunkID string, respChan chan JobResult) {
+					result := <-respChan
+					if result.Success {
+						log.Printf("✅ [DeleteFileJob] All replicas deleted for chunk %s", chunkID)
+					} else {
+						log.Printf("⚠️ [DeleteFileJob] Replica deletion failed for chunk %s: %v", chunkID, result.Error)
+					}
+				}(chunkID, replicaResp)
+			}
+
+			// Step 3: Remove metadata from MongoDB
+			log.Printf("🧹 [DeleteFileJob] Deleting file metadata for '%s' from database", req.FileName)
+			_, err = ms.db.Collection("file_metadata").DeleteOne(ctx, bson.M{"file_name": req.FileName})
+			if err != nil {
+				log.Printf("⚠️ [DeleteFileJob] Failed to delete metadata for '%s': %v", req.FileName, err)
+			} else {
+				log.Printf("✅ [DeleteFileJob] Metadata deleted for '%s'", req.FileName)
+			}
+
+			// Step 4: Respond to client
+			return JobResult{
+				Success: true,
+				Data: &pb.DeleteFileResponse{
+					Success:  true,
+					ClientId: req.ClientId,
+					Message:  "File deletion initiated",
+				},
+			}
+
+		case DeleteReplicaJob:
+			replicaData := job.Data.(ReplicaDeleteInfo)
+			chunkID := replicaData.ChunkID
+
+			success := true
+			var failedReplicas []string
+
+			for _, replica := range replicaData.ReplicaAddrs {
+				log.Printf("🗑️ [DeleteReplicaJob] Deleting replica chunk %s from %s", chunkID, replica)
+				err := sendChunkDeleteRequest(replica, chunkID)
+				if err != nil {
+					success = false
+					failedReplicas = append(failedReplicas, replica)
+					log.Printf("⚠️ [DeleteReplicaJob] Failed to delete replica %s from %s: %v", chunkID, replica, err)
+				} else {
+					log.Printf("✅ [DeleteReplicaJob] Replica %s deleted from %s", chunkID, replica)
+				}
+			}
+
+			if job.Response != nil {
+				job.Response <- JobResult{
+					Success: success,
+					Error:   fmt.Errorf("failed replicas: %v", failedReplicas),
+				}
+			}
+
+		case GetFileMetadataJob:
+			req, ok := job.Data.(*pb.GetFileMetadataRequest)
+			if !ok {
+				log.Printf("❌ Invalid data type for GetFileMetadataJob: %T", job.Data)
+				return JobResult{
+					Success: false,
+					Data: &pb.GetFileMetadataResponse{
 						Success: false,
 						Message: "Invalid data type",
 					},
-					Error: fmt.Errorf("invalid data type for GetChunkLocationsJob"),
+					Error: fmt.Errorf("invalid data type for GetFileMetadataJob"),
 				}
 			}
-			log.Printf("[GetChunkLocationsJob] 🔍 Getting chunk locations for %s", req.FileName)
 
+			log.Printf("🔍 Retrieving file metadata for %s", req.FileName)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+
 			var metadata FileMetadata
-			log.Printf("📦 Querying file_metadata for %s", req.FileName)
 			err := ms.db.Collection("file_metadata").FindOne(ctx, bson.M{"file_name": req.FileName}).Decode(&metadata)
 			if err != nil {
-				log.Printf("⚠️ No file metadata found for %s: %v", req.FileName, err)
+				log.Printf("⚠️ File not found: %s", req.FileName)
 				return JobResult{
 					Success: false,
-					Data: &pb.GetChunkResponse{
+					Data: &pb.GetFileMetadataResponse{
 						Success: false,
 						Message: "File not found",
 					},
 					Error: fmt.Errorf("file not found: %s", req.FileName),
 				}
 			}
-			log.Printf("[GetChunkLocationsJob] 📋 File metadata found: %v", metadata)
 
-			chunkLocations := make([]*pb.ChunkLocation, 0, metadata.ChunkCount)
+			log.Printf("📋 File metadata retrieved: %+v", metadata)
+
+			chunkHashes := make([]string, 0, metadata.ChunkCount)
+			chunkAssignments := make(map[int32]*pb.ChunkServers)
+
 			for i := int32(0); i < metadata.ChunkCount; i++ {
 				packet := metadata.ChunkAssignments[i]
+				chunkHashes = append(chunkHashes, packet.ChunkHash)
 
-				activeServers := make([]string, 0, len(packet.ReplicaAddresses)+1)
-				if ms.dataManager.IsServerRegistered(packet.LeaderAddress) {
-					activeServers = append(activeServers, packet.LeaderAddress)
-				}
-				for _, replica := range packet.ReplicaAddresses {
-					if ms.dataManager.IsServerRegistered(replica) {
-						activeServers = append(activeServers, replica)
-					}
+				chunkAssignments[i] = &pb.ChunkServers{
+					Leader:   packet.LeaderAddress,
+					Replicas: packet.ReplicaAddresses,
 				}
 
-				if len(activeServers) == 0 {
-					log.Printf("⚠️ No active servers for chunk %s_%d", req.FileName, i)
-					continue
-				}
-
-				chunkID := packet.ChunkName
-				chunkSize := packet.ChunkSize
-				chunkHash := packet.ChunkHash // Use chunkHash
-				chunkLocations = append(chunkLocations, &pb.ChunkLocation{
-					ChunkId:   chunkID,
-					Servers:   activeServers,
-					ChunkHash: chunkHash,
-					ChunkSize: chunkSize,
-				})
-				log.Printf("✅ Added chunk %s: %d bytes, servers %v", chunkID, chunkSize, activeServers)
-			}
-			if len(chunkLocations) == 0 {
-				log.Printf("⚠️ No chunk locations found for %s", req.FileName)
-				return JobResult{
-					Success: false,
-					Data: &pb.GetChunkResponse{
-						Success: false,
-						Message: "No chunk locations found",
-					},
-					Error: fmt.Errorf("no chunk locations found for %s", req.FileName),
-				}
+				log.Printf("✅ Chunk %d - Hash: %s, Leader: %s, Replicas: %v", i, packet.ChunkHash, packet.LeaderAddress, packet.ReplicaAddresses)
 			}
 
-			log.Printf("[GetChunkLocationsJob] ✅ Found chunk locations: %v", chunkLocations)
 			return JobResult{
 				Success: true,
-				Data: &pb.GetChunkResponse{
-					FileId:         metadata.ID,
-					ChunkLocations: chunkLocations,
-					Success:        true,
-					Message:        "Chunk locations retrieved successfully",
+				Data: &pb.GetFileMetadataResponse{
+					FileFormat:       metadata.FileFormat,
+					TotalSize:        metadata.TotalSize,
+					ChunkCount:       metadata.ChunkCount,
+					ChunkHashes:      chunkHashes,
+					ChunkAssignments: chunkAssignments,
+					ClientId:         req.ClientId,
+					Success:          true,
+					Message:          "Metadata retrieval successful",
 				},
 			}
 
@@ -410,8 +497,8 @@ func NewMasterServer() (*MasterServer, error) {
 			log.Printf("❌ Unknown job type: %v", job.Type)
 			return JobResult{Success: false, Error: fmt.Errorf("unknown job type: %d", job.Type)}
 		}
+		return JobResult{Success: false, Error: fmt.Errorf("unhandled job type")}
 	}
-
 	wp := NewWorkerPool(10, 100, executor)
 	go hm.RemoveInactiveServers()
 	ms.hm = hm
@@ -447,7 +534,7 @@ func (ms *MasterServer) RegisterChunkServer(ctx context.Context, req *pb.Registe
 	job := Job{
 		Type:     RegisterChunkServerJob,
 		Data:     req,
-		Response: responseChan,
+		Response: make(chan interface{}, 1),
 	}
 	log.Printf("📤 Submitting RegisterChunkServerJob for %s", req.ServerId)
 	ms.workerPool.SubmitJob(job)
@@ -477,7 +564,7 @@ func (ms *MasterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileRe
 	job := Job{
 		Type:     RegisterFileJob,
 		Data:     req,
-		Response: responseChan,
+		Response: make(chan interface{}, 1),
 	}
 	log.Printf("📤 Submitting RegisterFileJob for %s", req.FileName)
 	ms.workerPool.SubmitJob(job)
@@ -531,34 +618,117 @@ func (ms *MasterServer) ReportChunk(ctx context.Context, req *pb.ChunkReport) (*
 	}
 }
 
-// GetChunkLocations retrieves chunk locations
-func (ms *MasterServer) GetChunkLocations(ctx context.Context, req *pb.GetChunkRequest) (*pb.GetChunkResponse, error) {
-	log.Printf("📞 Received GetChunkLocations for %s", req.FileName)
+func (ms *MasterServer) DeleteFile(ctx context.Context, req *pb.DeleteFileRequest) (*pb.DeleteFileResponse, error) {
+	log.Printf("📞 [DeleteFile] Request received | FileName: '%s', ClientID: '%s'", req.FileName, req.ClientId)
+
+	// Create response channel
 	responseChan := make(chan interface{}, 1)
+
+	// Create DeleteFileJob
 	job := Job{
-		Type:     GetChunkLocationsJob,
+		Type:     DeleteFileJob,
 		Data:     req,
 		Response: responseChan,
 	}
-	log.Printf("📤 Submitting GetChunkLocationsJob for %s", req.FileName)
+
+	log.Printf("📤 [DeleteFile] Submitting DeleteFileJob to worker pool | FileName: '%s'", req.FileName)
+	ms.workerPool.SubmitJob(job)
+
+	select {
+	case result := <-responseChan:
+		jobResult, ok := result.(JobResult)
+		if !ok {
+			log.Printf("❌ [DeleteFile] Invalid job result format | FileName: '%s'", req.FileName)
+			return &pb.DeleteFileResponse{
+				Success:  false,
+				ClientId: req.ClientId,
+				Message:  "Internal error: invalid job result type",
+			}, fmt.Errorf("invalid job result type")
+		}
+
+		if !jobResult.Success {
+			log.Printf("❌ [DeleteFile] Job failed | FileName: '%s', Error: %v", req.FileName, jobResult.Error)
+			return &pb.DeleteFileResponse{
+				Success:  false,
+				ClientId: req.ClientId,
+				Message:  jobResult.Error.Error(),
+			}, nil
+		}
+
+		log.Printf("✅ [DeleteFile] Job completed successfully | FileName: '%s'", req.FileName)
+		return jobResult.Data.(*pb.DeleteFileResponse), nil
+
+	case <-ctx.Done():
+		log.Printf("⏳ [DeleteFile] Context timeout while waiting for job result | FileName: '%s', Error: %v", req.FileName, ctx.Err())
+		return &pb.DeleteFileResponse{
+			Success:  false,
+			ClientId: req.ClientId,
+			Message:  "Request timed out",
+		}, ctx.Err()
+	}
+}
+
+func sendChunkDeleteRequest(serverAddr, chunkID string) error {
+	log.Printf("🌐 Connecting to chunk server at %s for deletion of chunk '%s'", serverAddr, chunkID)
+
+	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(3*time.Second))
+	if err != nil {
+		log.Printf("🚫 Failed to connect to chunk server %s: %v", serverAddr, err)
+		return fmt.Errorf("failed to connect to chunk server: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewMasterServiceClient(conn) // ✅ Use correct client
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	log.Printf("📤 Sending DeleteChunk request for chunk ID '%s'", chunkID)
+	resp, err := client.DeleteChunk(ctx, &pb.DeleteChunkRequest{ChunkId: chunkID})
+	if err != nil {
+		log.Printf("❌ gRPC error while deleting chunk '%s': %v", chunkID, err)
+		return err
+	}
+	if !resp.Success {
+		log.Printf("⚠️ Chunk server responded with failure for chunk '%s': %s", chunkID, resp.Message)
+		return fmt.Errorf("server returned failure: %s", resp.Message)
+	}
+
+	log.Printf("✅ Successfully deleted chunk '%s' on server %s", chunkID, serverAddr)
+	return nil
+}
+
+// GetFileMetadata retrieves full metadata for a given file name
+func (ms *MasterServer) GetFileMetadata(ctx context.Context, req *pb.GetFileMetadataRequest) (*pb.GetFileMetadataResponse, error) {
+	log.Printf("📞 Received GetFileMetadata for %s from client %s", req.FileName, req.ClientId)
+
+	responseChan := make(chan interface{}, 1)
+	job := Job{
+		Type:     GetFileMetadataJob,
+		Data:     req,
+		Response: responseChan,
+	}
+
+	log.Printf("📤 Submitting GetFileMetadataJob for %s", req.FileName)
 	ms.workerPool.SubmitJob(job)
 
 	select {
 	case result := <-responseChan:
 		res, ok := result.(JobResult)
 		if !ok {
-			log.Printf("❌ Invalid result for GetChunkLocationsJob %s", req.FileName)
-			return &pb.GetChunkResponse{Success: false, Message: "Invalid job result"}, fmt.Errorf("invalid job result")
+			log.Printf("❌ Invalid result for GetFileMetadataJob %s", req.FileName)
+			return &pb.GetFileMetadataResponse{Success: false, Message: "Invalid job result"}, fmt.Errorf("invalid job result")
 		}
 		if !res.Success {
-			log.Printf("❌ GetChunkLocationsJob failed: %v", res.Error)
-			return &pb.GetChunkResponse{Success: false, Message: res.Error.Error()}, res.Error
+			log.Printf("❌ GetFileMetadataJob failed: %v", res.Error)
+			return &pb.GetFileMetadataResponse{Success: false, Message: res.Error.Error()}, res.Error
 		}
-		log.Printf("✅ GetChunkLocationsJob completed for %s", req.FileName)
-		return res.Data.(*pb.GetChunkResponse), nil
+		log.Printf("✅ GetFileMetadataJob completed for %s", req.FileName)
+		return res.Data.(*pb.GetFileMetadataResponse), nil
+
 	case <-ctx.Done():
-		log.Printf("❌ GetChunkLocationsJob timeout: %v", ctx.Err())
-		return &pb.GetChunkResponse{Success: false, Message: "Job timeout"}, ctx.Err()
+		log.Printf("❌ GetFileMetadataJob timeout: %v", ctx.Err())
+		return &pb.GetFileMetadataResponse{Success: false, Message: "Job timeout"}, ctx.Err()
 	}
 }
 
@@ -598,6 +768,7 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 	log.Printf("📝 Processing file %s, client=%s, size=%d, chunks=%d",
 		req.FileName, req.ClientId, req.TotalSize, req.ChunkCount)
 
+	// Validate input
 	if req.FileName == "" || req.ClientId == "" {
 		log.Printf("❌ Invalid arguments: file_name or client_id empty")
 		return nil, status.Errorf(codes.InvalidArgument, "file_name or client_id empty")
@@ -607,6 +778,7 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 		return nil, status.Errorf(codes.InvalidArgument, "invalid chunk count or sizes/hashes")
 	}
 
+	// Register file metadata
 	log.Printf("📦 Registering file metadata for %s", req.FileName)
 	fileID, err := ms.dataManager.RegisterFile(req)
 	if err != nil {
@@ -614,6 +786,7 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 		return nil, status.Errorf(codes.AlreadyExists, err.Error())
 	}
 
+	// Assign chunks to servers
 	log.Printf("📦 Assigning chunks for file %s", fileID)
 	assignments, err := ms.assignChunks(req, fileID)
 	if err != nil {
@@ -627,15 +800,7 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 		return nil, status.Errorf(codes.Internal, "failed to assign chunks: %v", err)
 	}
 
-	chunkAssignments := make(map[int32][]string)
-	replicationMap := make(map[int32][]string)
-	for idx, servers := range assignments.chunkAssignments {
-		chunkAssignments[idx] = servers.Servers
-	}
-	for idx, servers := range assignments.replicationMap {
-		replicationMap[idx] = servers.Servers
-	}
-
+	// Construct the FileMetadata object
 	fileMetadata := FileMetadata{
 		ID:               fileID,
 		FileName:         req.FileName,
@@ -649,12 +814,13 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 		RedundancyLevel:  req.RedundancyLevel,
 		CompressionUsed:  req.CompressionUsed,
 		ChunkAssignments: assignments.packets,
-		ReplicationMap:   replicationMap,
 	}
 
+	// Store in MongoDB
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	log.Printf("📦 Storing file metadata for %s", fileID)
+
+	log.Printf("📦 Storing file metadata in MongoDB for %s", fileID)
 	_, err = ms.db.Collection("file_metadata").InsertOne(ctx, fileMetadata)
 	if err != nil {
 		log.Printf("❌ Failed to store file metadata: %v", err)
@@ -667,24 +833,16 @@ func (ms *MasterServer) processRegisterFileJob(req *pb.RegisterFileRequest) (*pb
 		return nil, status.Errorf(codes.Internal, "store file metadata: %v", err)
 	}
 
-	// Removed the unused response variable to fix the compile error
-	log.Printf("📦 Storing client response for %s", fileID)
-	// Removed the misplaced line causing the error
-	if err != nil {
-		log.Printf("⚠️ Failed to store client response: %v", err)
-	}
-
-	log.Printf("✅ Registered file %s", fileID)
+	// Construct response
+	log.Printf("✅ Registered file %s successfully", fileID)
 	return &pb.RegisterFileResponse{
 		FileId:           fileID,
-		ChunkAssignments: assignments.chunkAssignments,
-		ReplicationMap:   convertToReplicaServers(assignments.replicationMap),
+		ChunkAssignments: assignments.chunkAssignments, // Needed by client
 		Success:          true,
 		Message:          "File registered successfully",
 	}, nil
 }
 
-// assignChunks assigns chunks to servers
 func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string) (*chunkAssignments, error) {
 	log.Printf("📦 Assigning chunks for %s, size=%d, chunks=%d", fileID, req.TotalSize, req.ChunkCount)
 
@@ -721,12 +879,12 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 	assignments := &chunkAssignments{
 		packets:          make([]ChunkPacket, 0, req.ChunkCount),
 		chunkAssignments: make(map[int32]*pb.ChunkServers),
-		replicationMap:   make(map[int32]*pb.ChunkServers),
 	}
 
 	for i := int32(0); i < req.ChunkCount; {
 		chunkSize := req.ChunkSizes[i]
-		log.Printf("⏳ Assigning chunk %d, size=%d bytes", i, chunkSize)
+		chunkHash := req.ChunkHashes[i]
+		log.Printf("⏳ Assigning chunk %d, size=%d bytes", chunkHash, chunkSize)
 
 		if chunkSize <= 0 {
 			log.Printf("❌ Invalid chunk size %d for chunk %d", chunkSize, i)
@@ -766,7 +924,7 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 			chunkSize = req.ChunkSizes[chunkIndex]
 			chunkHash := req.ChunkHashes[chunkIndex]
 
-			log.Printf("📋 Selecting replicas for chunk %d", chunkIndex, chunkHash)
+			log.Printf("📋 Selecting replicas for chunk %d, hash=%s", chunkIndex, chunkHash)
 			replicas := ms.le.SelectReplicas(leaderID, 2, servers, chunkSize, spaces)
 			if len(replicas) < 2 {
 				log.Printf("❌ Not enough replicas for chunk %d", chunkIndex)
@@ -783,10 +941,9 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 				replicaAddrs = append(replicaAddrs, addr)
 			}
 
-			packet := NewChunkPacket(fileID, chunkIndex, leaderAddr, replicaAddrs, req)
+			packet := NewChunkPacket(fileID, chunkIndex, leaderAddr, replicaAddrs, chunkHash)
 			assignments.packets = append(assignments.packets, packet)
 			assignments.chunkAssignments[chunkIndex] = packet.ToProtoChunkServers()
-			assignments.replicationMap[chunkIndex] = &pb.ChunkServers{Servers: packet.ToProtoReplicaServers()}
 
 			log.Printf("✅ Assigned chunk %d to leader %s, replicas %v", chunkIndex, leaderID, replicas)
 
@@ -803,7 +960,6 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 	return assignments, nil
 }
 
-// MaxChunksForServer calculates max chunks a server can handle
 func (dm *DataManager) MaxChunksForServer(ms *MasterServer, serverID string, chunkSizes []int64) int {
 	// Check if server is active (has sent a heartbeat)
 	if !ms.hm.IsChunkServerActive(serverID) {
@@ -845,5 +1001,4 @@ func (dm *DataManager) MaxChunksForServer(ms *MasterServer, serverID string, chu
 type chunkAssignments struct {
 	packets          []ChunkPacket
 	chunkAssignments map[int32]*pb.ChunkServers
-	replicationMap   map[int32]*pb.ChunkServers
 }

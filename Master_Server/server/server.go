@@ -13,38 +13,42 @@ import (
 
 // ChunkPacket represents metadata for a single chunk
 type ChunkPacket struct {
-	ChunkName        string   // e.g., "file_client1_test.txt_123456_0"
-	LeaderAddress    string   // e.g., "chunk1:50051"
-	ReplicaAddresses []string // e.g., ["chunk2:50051", "chunk3:50051"]
-	FileID           string   // e.g., "file_client1_test.txt_123456"
-	ChunkIndex       int32    // e.g., 0
-	ChunkSize        int64    // e.g., 64000000 (bytes)
-	ChunkHash        string   // e.g., "hash1"
+	LeaderAddress    string 
+	ReplicaAddresses []string 
+	FileID           string   
+	ChunkIndex       int32    
+	ChunkSize        int64    
+	ChunkHash        string  
 }
 
-// NewChunkPacket creates a new ChunkPacket
-func NewChunkPacket(fileID string, chunkIndex int32, leader string, replicas []string, req *pb.RegisterFileRequest) ChunkPacket {
+
+func NewChunkPacket(fileID string, chunkIndex int32, leader string, replicas []string, chunkHash string) ChunkPacket {
 	return ChunkPacket{
-		ChunkName:        fmt.Sprintf("%s_%d", fileID, chunkIndex),
 		LeaderAddress:    leader,
 		ReplicaAddresses: replicas,
 		FileID:           fileID,
 		ChunkIndex:       chunkIndex,
-		ChunkSize:        req.ChunkSizes[chunkIndex],
-		ChunkHash:        req.ChunkHashes[chunkIndex],
+		ChunkHash:        chunkHash,
 	}
 }
 
+
 // ToProtoChunkServers converts to proto format
-func (cp ChunkPacket) ToProtoChunkServers() *pb.ChunkServers {
-	servers := []string{cp.LeaderAddress}
-	servers = append(servers, cp.ReplicaAddresses...)
-	return &pb.ChunkServers{Servers: servers}
+func (cp *ChunkPacket) ToProtoChunkServers() *pb.ChunkServers {
+    return &pb.ChunkServers{
+        ChunkHash:   cp.ChunkHash,
+        ChunkIndex:  cp.ChunkIndex,
+        Leader:      cp.LeaderAddress,
+        Replicas:    cp.ReplicaAddresses,
+    }
 }
 
-// ToProtoReplicaServers returns replica addresses
-func (cp ChunkPacket) ToProtoReplicaServers() []string {
-	return cp.ReplicaAddresses
+func (cp *ChunkPacket) ToProtoReplicaServers() *pb.ChunkServers {
+    return &pb.ChunkServers{
+        ChunkHash:  cp.ChunkHash,
+        ChunkIndex: cp.ChunkIndex,
+        Replicas:   cp.ReplicaAddresses,
+    }
 }
 
 // ReplicaSelector handles replica server selection

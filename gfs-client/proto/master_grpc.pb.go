@@ -30,11 +30,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MasterServiceClient interface {
-	// Client requests chunk locations for reading a file
 	GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error)
-	// Client registers a new file and gets chunk server assignments
 	RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error)
-	// Client retrieves metadata for an existing file
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
 	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
 	AppendFile(ctx context.Context, in *AppendFileRequest, opts ...grpc.CallOption) (*AppendFileResponse, error)
@@ -102,11 +99,8 @@ func (c *masterServiceClient) AppendFile(ctx context.Context, in *AppendFileRequ
 // All implementations must embed UnimplementedMasterServiceServer
 // for forward compatibility.
 type MasterServiceServer interface {
-	// Client requests chunk locations for reading a file
 	GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error)
-	// Client registers a new file and gets chunk server assignments
 	RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error)
-	// Client retrieves metadata for an existing file
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
 	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
 	AppendFile(context.Context, *AppendFileRequest) (*AppendFileResponse, error)

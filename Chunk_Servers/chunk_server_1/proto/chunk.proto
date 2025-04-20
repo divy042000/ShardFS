@@ -13,7 +13,7 @@ service ChunkService {
 
 
 message ChunkUploadRequest {
-  string file_id = 1
+  string file_id = 1;
   string chunk_id = 2;       
   bytes data = 3;            
   string leader = 4;         

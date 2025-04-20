@@ -26,12 +26,8 @@ const (
 // ChunkServiceClient is the client API for ChunkService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// ChunkService handles chunk uploads and downloads
 type ChunkServiceClient interface {
-	// Client uploads a chunk to a chunk server
 	UploadChunk(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ChunkUploadRequest, ChunkUploadResponse], error)
-	// Client downloads a chunk from a chunk server
 	DownloadChunk(ctx context.Context, in *ChunkRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChunkData], error)
 }
 
@@ -78,12 +74,8 @@ type ChunkService_DownloadChunkClient = grpc.ServerStreamingClient[ChunkData]
 // ChunkServiceServer is the server API for ChunkService service.
 // All implementations must embed UnimplementedChunkServiceServer
 // for forward compatibility.
-//
-// ChunkService handles chunk uploads and downloads
 type ChunkServiceServer interface {
-	// Client uploads a chunk to a chunk server
 	UploadChunk(grpc.ClientStreamingServer[ChunkUploadRequest, ChunkUploadResponse]) error
-	// Client downloads a chunk from a chunk server
 	DownloadChunk(*ChunkRequest, grpc.ServerStreamingServer[ChunkData]) error
 	mustEmbedUnimplementedChunkServiceServer()
 }

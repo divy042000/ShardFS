@@ -4,40 +4,16 @@ package proto;
 
 option go_package = "./";
 
-// MasterService handles client requests for file operations
 
 service MasterService {
-  // Client requests chunk locations for reading a file
-  rpc GetChunkLocations(GetChunkRequest) returns (GetChunkResponse);
-
-  // Client registers a new file and gets chunk server assignments
   rpc RegisterFile(RegisterFileRequest) returns (RegisterFileResponse);
-
-  // Client retrieves metadata for an existing file
   rpc GetFileMetadata(GetFileMetadataRequest) returns (GetFileMetadataResponse);
-
-  // Delete file request to master server 
-
-  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
-  
-  // Append File request to master server
-
+   rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
    rpc AppendFile(AppendFileRequest) returns   (AppendFileResponse);
 
 }
 
-// Messages for MasterService
-message GetChunkRequest {
-  string file_name = 1;
-  int32 chunk_index = 2;
-}
 
-message GetChunkResponse {
-  string chunk_id = 1;
-  repeated string chunk_servers = 2; // List of gRPC endpoints (e.g., "chunkserver1:50051")
-  bool success = 3;
-  string message = 4;
-}
 
 message RegisterFileRequest {
   string file_name = 1;
@@ -55,32 +31,41 @@ message RegisterFileRequest {
 
 message RegisterFileResponse {
   string file_id = 1;
-  string leader_server = 2; // Primary chunk server endpoint
-  map<int32, ChunkServers> chunk_assignments = 3; // Chunk index -> primary chunk server endpoints
-  map<int32, ReplicaServers> replication_map = 4; // Chunk index -> list of replica servers
-  bool success = 5;
-  string message = 6;
+  string leader_server = 2; 
+  map<int32, ChunkServers> chunk_assignments = 3; 
+  bool success = 4; 
+  string message = 5;
 }
 
 message ChunkServers {
-  repeated string servers = 1;
+  string chunk_hash = 1;
+  int32 chunk_index = 2;
+  string leader = 3;
+  repeated string replicas = 4;
 }
 
 message ReplicaServers {
-  repeated string servers = 1;
+  string chunk_hash = 1;
+  int32 chunk_index = 2;
+  repeated string replicas = 3;
 }
 
 message GetFileMetadataRequest {
   string file_name = 1;
+  string client_id = 2;
 }
 
 message GetFileMetadataResponse {
-  string file_id = 1;
-  int32 chunk_count = 2;
-  repeated string chunk_hashes = 3;
-  bool success = 4;
-  string message = 5;
+  string file_format = 1;
+  int64 total_size = 2;
+  int32 chunk_count = 3;
+  repeated string chunk_hashes = 4;
+  map<int32, ChunkServers> chunk_assignments = 5;
+  string client_id = 6;
+  bool success = 7;
+  string message = 8;
 }
+
 
 message DeleteFileRequest{
   string file_name = 1;
@@ -89,7 +74,8 @@ message DeleteFileRequest{
 
 message DeleteFileResponse{
   bool success = 1;
-  string message = 2;
+  string client_id = 2;
+  string message = 3;
 }
 
 message AppendFileRequest {

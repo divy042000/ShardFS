@@ -23,23 +23,29 @@ type ChunkServer struct {
 	masterAddress      string
 	workerPool         *WorkerPool
 	heartbeatManager   *HeartbeatManager
+	selfAddress        string
 	chunkTable         map[string][]string
 	replicationManager *ReplicationManager
 	pb.UnimplementedChunkServiceServer
 }
 
-// NewChunkServer initializes a Chunk Server
-func NewChunkServer(serverID, storagePath, masterAddress string, workerCount int) *ChunkServer {
+func NewChunkServer(serverID, storagePath, masterAddress, selfAddress string, workerCount int) *ChunkServer {
 	cs := &ChunkServer{
-		serverID:         serverID,
-		storagePath:      storagePath,
-		masterAddress:    masterAddress,
-		workerPool:       NewWorkerPool(workerCount, 100), // Worker pool with queue size of 100
-		heartbeatManager: NewHeartbeatManager(serverID, masterAddress, storagePath, 10*time.Second),
-		chunkTable:       make(map[string][]string),
+		serverID:      serverID,
+		storagePath:   storagePath,
+		masterAddress: masterAddress,
+		selfAddress:   selfAddress,
+		chunkTable:    make(map[string][]string),
 	}
 
+	// Step 1: Initialize ReplicationManager first
 	cs.replicationManager = NewReplicationManager(cs)
+
+	// Step 2: Pass it to the WorkerPool
+	cs.workerPool = NewWorkerPool(workerCount, 100, cs.replicationManager)
+
+	// Step 3: Initialize HeartbeatManager (unrelated to replication)
+	cs.heartbeatManager = NewHeartbeatManager(serverID, masterAddress, storagePath, 10*time.Second)
 
 	return cs
 }
@@ -56,8 +62,8 @@ func (cs *ChunkServer) Start() {
 	client := pb.NewMasterServiceClient(conn)
 	log.Printf("Attempting to register chunk server %s at %s", cs.serverID, ChunkServerAddr)
 	resp, err := client.RegisterChunkServer(context.Background(), &pb.RegisterChunkServerRequest{
-		ServerId: cs.serverID,     // e.g., "chunk_server_1"
-		Address:  ChunkServerAddr, // e.g., "chunk_server_container:50051"
+		ServerId: cs.serverID,
+		Address:  ChunkServerAddr,
 	})
 	if err != nil {
 		log.Printf("❌ Failed to register with master: %v", err)
@@ -68,7 +74,7 @@ func (cs *ChunkServer) Start() {
 	// Start gRPC server
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		log.Fatalf("❌ Failed to listen on port 50051: %v", err)
+		log.Fatalf("❌ Failed to listen on port 50054: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
@@ -77,80 +83,93 @@ func (cs *ChunkServer) Start() {
 
 	go cs.heartbeatManager.StartHeartbeat()
 
-	log.Printf("✅ Chunk Server %s started on port 50051", cs.serverID)
+	log.Printf("✅ Chunk Server %s started on port 50054", cs.serverID)
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("❌ Failed to serve gRPC: %v", err)
 	}
 }
 
 func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) error {
-	var chunkID string
+	var chunkID, fileID string
 	var data []byte
 	var leader, follower1, follower2 string
+
+	log.Println("🚀 Starting UploadChunk stream handler...")
 
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
-			log.Printf("📥 Received full chunk %s for storage to leader %s", chunkID, leader)
+			log.Printf("📥 Received complete data stream for chunk '%s' of file '%s' at leader '%s'", chunkID, fileID, leader)
 
-			// Submit storage to worker pool
+			// 1. Store chunk locally via worker pool
+			log.Printf("💾 Submitting write job for chunk '%s' to worker pool", chunkID)
 			storageChan := make(chan JobResult, 1)
-			storageJob := Job{
+			cs.workerPool.SubmitJob(Job{
 				Type:     WriteJob,
 				ChunkID:  chunkID,
 				Data:     data,
 				Response: storageChan,
-			}
-			cs.workerPool.SubmitJob(storageJob)
+			})
 
-			// Submit replication jobs to worker pool
-			replicationChans := make([]chan JobResult, 0)
-			followers := []string{follower1, follower2}
-			for i := 1; i < len(followers); i++ { // Start from index 1 (skip leader)
-				if followers[i] == "" {
-					continue
-				}
+			storageResult := <-storageChan
+			if !storageResult.Success {
+				log.Printf("❌ Failed to write chunk '%s': %s", chunkID, storageResult.Message)
+				return stream.SendAndClose(&pb.ChunkUploadResponse{
+					Success: false,
+					Message: storageResult.Message,
+					FileId:  fileID,
+					ChunkId: chunkID,
+				})
+			}
+			log.Printf("✅ Successfully stored chunk '%s' at leader '%s'", chunkID, leader)
+
+			// 2. Submit replication job to worker pool
+			if follower1 != "" {
+				log.Printf("📨 Submitting replication job for chunk '%s' to followers: [%s, %s]", chunkID, follower1, follower2)
 				replicationChan := make(chan JobResult, 1)
-				replicationJob := Job{
+				cs.workerPool.SubmitJob(Job{
 					Type:         ReplicationJob,
 					ChunkID:      chunkID,
 					Data:         data,
-					Followers:    followers,
-					CurrentIndex: i,
+					Followers:    []string{follower1, follower2},
+					CurrentIndex: 0,
 					Response:     replicationChan,
+				})
+
+				replicationResult := <-replicationChan
+				if !replicationResult.Success {
+					log.Printf("❌ Replication failed for chunk '%s': %s", chunkID, replicationResult.Message)
+					return stream.SendAndClose(&pb.ChunkUploadResponse{
+						Success: false,
+						Message: "Replication failed",
+						FileId:  fileID,
+						ChunkId: chunkID,
+					})
 				}
-				cs.workerPool.SubmitJob(replicationJob)
-				replicationChans = append(replicationChans, replicationChan)
+				log.Printf("✅ Replication completed for chunk '%s'", chunkID)
+			} else {
+				log.Printf("⚠️ No followers provided for replication of chunk '%s'", chunkID)
 			}
 
-			// Wait for storage
-			storageResult := <-storageChan
-			if !storageResult.Success {
-				log.Printf("❌ Storage error for %s: %s", chunkID, storageResult.Message)
-				return stream.SendAndClose(&pb.ChunkUploadResponse{Success: false, Message: storageResult.Message})
-			}
-
-			// Wait for all replication results
-			hasReplicationError := false
-			for _, ch := range replicationChans {
-				result := <-ch
-				if !result.Success {
-					log.Printf("⚠️ Replication error for %s: %s", chunkID, result.Message)
-					hasReplicationError = true
-				}
-			}
-			if hasReplicationError {
-				return stream.SendAndClose(&pb.ChunkUploadResponse{Success: false, Message: "Replication failed"})
-			}
-
-			log.Printf("✅ Chunk %s stored and replicated successfully", chunkID)
-			return stream.SendAndClose(&pb.ChunkUploadResponse{Success: true, Message: "Chunk uploaded and replicated"})
+			log.Printf("📦 UploadChunk process complete for chunk '%s' of file '%s'", chunkID, fileID)
+			return stream.SendAndClose(&pb.ChunkUploadResponse{
+				Success: true,
+				Message: "Chunk uploaded and replicated",
+				FileId:  fileID,
+				ChunkId: chunkID,
+			})
 		}
+
 		if err != nil {
+			log.Printf("❌ Error receiving chunk data stream: %v", err)
 			return err
 		}
 
+		log.Printf("📡 Receiving data for chunk '%s', file '%s'...", req.ChunkId, req.FileId)
+
+		// Extract and accumulate data
 		chunkID = req.ChunkId
+		fileID = req.FileId
 		data = append(data, req.Data...)
 		leader = req.Leader
 		follower1 = req.Follower1
@@ -158,33 +177,70 @@ func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) err
 	}
 }
 
-// SendChunk handles chunk replication requests from the leader
 func (cs *ChunkServer) SendChunk(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
-	log.Printf("📥 Receiving replicated chunk %s from leader", req.ChunkId)
+	log.Printf("📥 [RECV] Follower '%s' received chunk '%s' of file '%s' for replication", cs.selfAddress, req.ChunkId, req.FileId)
 
-	// Submit storage to worker pool
+	// 1. Store chunk locally using worker pool
+	log.Printf("💾 [WRITE] Submitting write job for chunk '%s' to local disk at '%s'", req.ChunkId, cs.selfAddress)
 	responseChan := make(chan JobResult, 1)
-	job := Job{
+	cs.workerPool.SubmitJob(Job{
+		FileId:   req.FileId,
 		Type:     WriteJob,
 		ChunkID:  req.ChunkId,
 		Data:     req.Data,
 		Response: responseChan,
-	}
-	cs.workerPool.SubmitJob(job)
+	})
 	result := <-responseChan
+
+	statusMap := map[string]bool{cs.selfAddress: result.Success}
 	if !result.Success {
-		log.Printf("❌ Replication error for %s: %s", req.ChunkId, result.Message)
-		return &pb.ReplicationResponse{Success: false, Message: result.Message}, nil
+		log.Printf("❌ [FAIL] Failed to write chunk '%s' at follower '%s': %s", req.ChunkId, cs.selfAddress, result.Message)
+		return &pb.ReplicationResponse{
+			Success:   false,
+			Message:   result.Message,
+			StatusMap: statusMap,
+		}, nil
+	}
+	log.Printf("✅ [SUCCESS] Chunk '%s' successfully written at '%s'", req.ChunkId, cs.selfAddress)
+
+	// 2. Submit next chained replication job to the worker pool
+	nextIdx := findIndex(req.Followers, cs.selfAddress) + 1
+	if nextIdx < len(req.Followers) && req.Followers[nextIdx] != "" {
+		nextFollower := req.Followers[nextIdx]
+		log.Printf("🔗 [CHAIN] Submitting chained replication for chunk '%s' to follower '%s'", req.ChunkId, nextFollower)
+
+		replicationChan := make(chan JobResult, 1)
+		cs.workerPool.SubmitJob(Job{
+			Type:         ReplicationJob,
+			ChunkID:      req.ChunkId,
+			Data:         req.Data,
+			Followers:    req.Followers,
+			CurrentIndex: nextIdx,
+			Response:     replicationChan,
+		})
+
+		replicationResult := <-replicationChan
+		if !replicationResult.Success {
+			log.Printf("⚠️ [WARN] Replication to next follower '%s' failed for chunk '%s': %s", nextFollower, req.ChunkId, replicationResult.Message)
+			return &pb.ReplicationResponse{
+				Success:   false,
+				Message:   "Next replication failed",
+				StatusMap: statusMap,
+			}, nil
+		}
+
+		log.Printf("✅ [CHAIN] Follower '%s' successfully replicated chunk '%s'", nextFollower, req.ChunkId)
+		statusMap[nextFollower] = true
+	} else {
+		log.Printf("🔚 [END] No next follower. Replication chain ends at '%s'", cs.selfAddress)
 	}
 
-	log.Printf("✅ Chunk %s written as follower, initiating next replication", req.ChunkId)
-	if err := cs.ReplicateChunk(req.ChunkId, req.Data, req.Followers, 1); err != nil {
-		log.Printf("⚠️ Next replication failed for %s: %v", req.ChunkId, err)
-		return &pb.ReplicationResponse{Success: false, Message: "Next replication failed"}, nil
-	}
-
-	log.Printf("✅ Chunk %s replication chain completed", req.ChunkId)
-	return &pb.ReplicationResponse{Success: true, Message: "Replication completed"}, nil
+	log.Printf("🏁 [DONE] Replication chain complete at '%s' for chunk '%s'", cs.selfAddress, req.ChunkId)
+	return &pb.ReplicationResponse{
+		Success:   true,
+		Message:   "Replication successful",
+		StatusMap: statusMap,
+	}, nil
 }
 
 // ReadChunk handles chunk read requests from clients
@@ -208,11 +264,6 @@ func (cs *ChunkServer) ReadChunk(ctx context.Context, req *pb.ReadRequest) (*pb.
 
 	log.Printf("✅ Chunk %s read successfully", req.ChunkId)
 	return &pb.ReadResponse{Success: true, Data: result.Data}, nil
-}
-
-// ReplicateChunk forwards the chunk to follower chunk servers
-func (cs *ChunkServer) ReplicateChunk(chunkID string, data []byte, followers []string, version int) error {
-	return cs.replicationManager.ReplicateChunk(chunkID, data, followers, version)
 }
 
 // GetStoredChunkIds retrieves the list of stored chunk IDs from the storage directory
@@ -240,4 +291,33 @@ func (cs *ChunkServer) UpdateChunkMetadata(serverID string, chunkIDs []string) {
 	}
 
 	log.Printf("📌 Updated metadata: %d chunks stored by server: %s", len(chunkIDs), serverID)
+}
+
+func allSuccess(statusMap map[string]bool) bool {
+	for _, success := range statusMap {
+		if !success {
+			return false
+		}
+	}
+	return true
+}
+
+func findIndex(slice []string, target string) int {
+	for i, v := range slice {
+		if v == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func mergeStatusMaps(m1, m2 map[string]bool) map[string]bool {
+	merged := make(map[string]bool)
+	for k, v := range m1 {
+		merged[k] = v
+	}
+	for k, v := range m2 {
+		merged[k] = v
+	}
+	return merged
 }

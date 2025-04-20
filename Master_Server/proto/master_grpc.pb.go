@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MasterService_GetChunkLocations_FullMethodName   = "/proto.MasterService/GetChunkLocations"
+	MasterService_DeleteFile_FullMethodName          = "/proto.MasterService/DeleteFile"
+	MasterService_DeleteChunk_FullMethodName         = "/proto.MasterService/DeleteChunk"
 	MasterService_ReportChunk_FullMethodName         = "/proto.MasterService/ReportChunk"
 	MasterService_RegisterFile_FullMethodName        = "/proto.MasterService/RegisterFile"
 	MasterService_GetFileMetadata_FullMethodName     = "/proto.MasterService/GetFileMetadata"
@@ -32,11 +33,11 @@ const (
 //
 // Master Service
 type MasterServiceClient interface {
-	GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error)
+	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
+	DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error)
 	ReportChunk(ctx context.Context, in *ChunkReport, opts ...grpc.CallOption) (*ChunkResponse, error)
 	RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error)
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
-	// Registering chunk servers in master pool of servers
 	RegisterChunkServer(ctx context.Context, in *RegisterChunkServerRequest, opts ...grpc.CallOption) (*RegisterChunkServerResponse, error)
 }
 
@@ -48,10 +49,20 @@ func NewMasterServiceClient(cc grpc.ClientConnInterface) MasterServiceClient {
 	return &masterServiceClient{cc}
 }
 
-func (c *masterServiceClient) GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error) {
+func (c *masterServiceClient) DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetChunkResponse)
-	err := c.cc.Invoke(ctx, MasterService_GetChunkLocations_FullMethodName, in, out, cOpts...)
+	out := new(DeleteFileResponse)
+	err := c.cc.Invoke(ctx, MasterService_DeleteFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *masterServiceClient) DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteChunkResponse)
+	err := c.cc.Invoke(ctx, MasterService_DeleteChunk_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +115,11 @@ func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *Regis
 //
 // Master Service
 type MasterServiceServer interface {
-	GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error)
+	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
+	DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error)
 	ReportChunk(context.Context, *ChunkReport) (*ChunkResponse, error)
 	RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error)
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
-	// Registering chunk servers in master pool of servers
 	RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error)
 	mustEmbedUnimplementedMasterServiceServer()
 }
@@ -120,8 +131,11 @@ type MasterServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMasterServiceServer struct{}
 
-func (UnimplementedMasterServiceServer) GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetChunkLocations not implemented")
+func (UnimplementedMasterServiceServer) DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteFile not implemented")
+}
+func (UnimplementedMasterServiceServer) DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteChunk not implemented")
 }
 func (UnimplementedMasterServiceServer) ReportChunk(context.Context, *ChunkReport) (*ChunkResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReportChunk not implemented")
@@ -156,20 +170,38 @@ func RegisterMasterServiceServer(s grpc.ServiceRegistrar, srv MasterServiceServe
 	s.RegisterService(&MasterService_ServiceDesc, srv)
 }
 
-func _MasterService_GetChunkLocations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetChunkRequest)
+func _MasterService_DeleteFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFileRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MasterServiceServer).GetChunkLocations(ctx, in)
+		return srv.(MasterServiceServer).DeleteFile(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MasterService_GetChunkLocations_FullMethodName,
+		FullMethod: MasterService_DeleteFile_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServiceServer).GetChunkLocations(ctx, req.(*GetChunkRequest))
+		return srv.(MasterServiceServer).DeleteFile(ctx, req.(*DeleteFileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MasterService_DeleteChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteChunkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServiceServer).DeleteChunk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterService_DeleteChunk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServiceServer).DeleteChunk(ctx, req.(*DeleteChunkRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -254,8 +286,12 @@ var MasterService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*MasterServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetChunkLocations",
-			Handler:    _MasterService_GetChunkLocations_Handler,
+			MethodName: "DeleteFile",
+			Handler:    _MasterService_DeleteFile_Handler,
+		},
+		{
+			MethodName: "DeleteChunk",
+			Handler:    _MasterService_DeleteChunk_Handler,
 		},
 		{
 			MethodName: "ReportChunk",

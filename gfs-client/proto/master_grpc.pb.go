@@ -19,18 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MasterService_GetChunkLocations_FullMethodName = "/proto.MasterService/GetChunkLocations"
-	MasterService_RegisterFile_FullMethodName      = "/proto.MasterService/RegisterFile"
-	MasterService_GetFileMetadata_FullMethodName   = "/proto.MasterService/GetFileMetadata"
-	MasterService_DeleteFile_FullMethodName        = "/proto.MasterService/DeleteFile"
-	MasterService_AppendFile_FullMethodName        = "/proto.MasterService/AppendFile"
+	MasterService_RegisterFile_FullMethodName    = "/proto.MasterService/RegisterFile"
+	MasterService_GetFileMetadata_FullMethodName = "/proto.MasterService/GetFileMetadata"
+	MasterService_DeleteFile_FullMethodName      = "/proto.MasterService/DeleteFile"
+	MasterService_AppendFile_FullMethodName      = "/proto.MasterService/AppendFile"
 )
 
 // MasterServiceClient is the client API for MasterService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MasterServiceClient interface {
-	GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error)
 	RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error)
 	GetFileMetadata(ctx context.Context, in *GetFileMetadataRequest, opts ...grpc.CallOption) (*GetFileMetadataResponse, error)
 	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
@@ -43,16 +41,6 @@ type masterServiceClient struct {
 
 func NewMasterServiceClient(cc grpc.ClientConnInterface) MasterServiceClient {
 	return &masterServiceClient{cc}
-}
-
-func (c *masterServiceClient) GetChunkLocations(ctx context.Context, in *GetChunkRequest, opts ...grpc.CallOption) (*GetChunkResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetChunkResponse)
-	err := c.cc.Invoke(ctx, MasterService_GetChunkLocations_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *masterServiceClient) RegisterFile(ctx context.Context, in *RegisterFileRequest, opts ...grpc.CallOption) (*RegisterFileResponse, error) {
@@ -99,7 +87,6 @@ func (c *masterServiceClient) AppendFile(ctx context.Context, in *AppendFileRequ
 // All implementations must embed UnimplementedMasterServiceServer
 // for forward compatibility.
 type MasterServiceServer interface {
-	GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error)
 	RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error)
 	GetFileMetadata(context.Context, *GetFileMetadataRequest) (*GetFileMetadataResponse, error)
 	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
@@ -114,9 +101,6 @@ type MasterServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMasterServiceServer struct{}
 
-func (UnimplementedMasterServiceServer) GetChunkLocations(context.Context, *GetChunkRequest) (*GetChunkResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetChunkLocations not implemented")
-}
 func (UnimplementedMasterServiceServer) RegisterFile(context.Context, *RegisterFileRequest) (*RegisterFileResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterFile not implemented")
 }
@@ -148,24 +132,6 @@ func RegisterMasterServiceServer(s grpc.ServiceRegistrar, srv MasterServiceServe
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MasterService_ServiceDesc, srv)
-}
-
-func _MasterService_GetChunkLocations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetChunkRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MasterServiceServer).GetChunkLocations(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MasterService_GetChunkLocations_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MasterServiceServer).GetChunkLocations(ctx, req.(*GetChunkRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _MasterService_RegisterFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -247,10 +213,6 @@ var MasterService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "proto.MasterService",
 	HandlerType: (*MasterServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "GetChunkLocations",
-			Handler:    _MasterService_GetChunkLocations_Handler,
-		},
 		{
 			MethodName: "RegisterFile",
 			Handler:    _MasterService_RegisterFile_Handler,

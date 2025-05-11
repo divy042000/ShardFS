@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChunkService_UploadChunk_FullMethodName = "/proto.ChunkService/UploadChunk"
-	ChunkService_ReadChunk_FullMethodName   = "/proto.ChunkService/ReadChunk"
-	ChunkService_SendChunk_FullMethodName   = "/proto.ChunkService/SendChunk"
+	ChunkService_UploadChunk_FullMethodName   = "/proto.ChunkService/UploadChunk"
+	ChunkService_DownloadChunk_FullMethodName = "/proto.ChunkService/DownloadChunk"
+	ChunkService_DeleteChunk_FullMethodName   = "/proto.ChunkService/DeleteChunk"
+	ChunkService_SendChunk_FullMethodName     = "/proto.ChunkService/SendChunk"
 )
 
 // ChunkServiceClient is the client API for ChunkService service.
@@ -31,7 +32,8 @@ const (
 // Chunk Service for handling chunk operations
 type ChunkServiceClient interface {
 	UploadChunk(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ChunkUploadRequest, ChunkUploadResponse], error)
-	ReadChunk(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
+	DownloadChunk(ctx context.Context, in *DownloadRequest, opts ...grpc.CallOption) (*DownloadResponse, error)
+	DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error)
 	SendChunk(ctx context.Context, in *ReplicationRequest, opts ...grpc.CallOption) (*ReplicationResponse, error)
 }
 
@@ -56,10 +58,20 @@ func (c *chunkServiceClient) UploadChunk(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ChunkService_UploadChunkClient = grpc.ClientStreamingClient[ChunkUploadRequest, ChunkUploadResponse]
 
-func (c *chunkServiceClient) ReadChunk(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error) {
+func (c *chunkServiceClient) DownloadChunk(ctx context.Context, in *DownloadRequest, opts ...grpc.CallOption) (*DownloadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReadResponse)
-	err := c.cc.Invoke(ctx, ChunkService_ReadChunk_FullMethodName, in, out, cOpts...)
+	out := new(DownloadResponse)
+	err := c.cc.Invoke(ctx, ChunkService_DownloadChunk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chunkServiceClient) DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteChunkResponse)
+	err := c.cc.Invoke(ctx, ChunkService_DeleteChunk_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +95,8 @@ func (c *chunkServiceClient) SendChunk(ctx context.Context, in *ReplicationReque
 // Chunk Service for handling chunk operations
 type ChunkServiceServer interface {
 	UploadChunk(grpc.ClientStreamingServer[ChunkUploadRequest, ChunkUploadResponse]) error
-	ReadChunk(context.Context, *ReadRequest) (*ReadResponse, error)
+	DownloadChunk(context.Context, *DownloadRequest) (*DownloadResponse, error)
+	DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error)
 	SendChunk(context.Context, *ReplicationRequest) (*ReplicationResponse, error)
 	mustEmbedUnimplementedChunkServiceServer()
 }
@@ -98,8 +111,11 @@ type UnimplementedChunkServiceServer struct{}
 func (UnimplementedChunkServiceServer) UploadChunk(grpc.ClientStreamingServer[ChunkUploadRequest, ChunkUploadResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method UploadChunk not implemented")
 }
-func (UnimplementedChunkServiceServer) ReadChunk(context.Context, *ReadRequest) (*ReadResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReadChunk not implemented")
+func (UnimplementedChunkServiceServer) DownloadChunk(context.Context, *DownloadRequest) (*DownloadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DownloadChunk not implemented")
+}
+func (UnimplementedChunkServiceServer) DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteChunk not implemented")
 }
 func (UnimplementedChunkServiceServer) SendChunk(context.Context, *ReplicationRequest) (*ReplicationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendChunk not implemented")
@@ -132,20 +148,38 @@ func _ChunkService_UploadChunk_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ChunkService_UploadChunkServer = grpc.ClientStreamingServer[ChunkUploadRequest, ChunkUploadResponse]
 
-func _ChunkService_ReadChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReadRequest)
+func _ChunkService_DownloadChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ChunkServiceServer).ReadChunk(ctx, in)
+		return srv.(ChunkServiceServer).DownloadChunk(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: ChunkService_ReadChunk_FullMethodName,
+		FullMethod: ChunkService_DownloadChunk_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChunkServiceServer).ReadChunk(ctx, req.(*ReadRequest))
+		return srv.(ChunkServiceServer).DownloadChunk(ctx, req.(*DownloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChunkService_DeleteChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteChunkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChunkServiceServer).DeleteChunk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChunkService_DeleteChunk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChunkServiceServer).DeleteChunk(ctx, req.(*DeleteChunkRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -176,8 +210,12 @@ var ChunkService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ChunkServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ReadChunk",
-			Handler:    _ChunkService_ReadChunk_Handler,
+			MethodName: "DownloadChunk",
+			Handler:    _ChunkService_DownloadChunk_Handler,
+		},
+		{
+			MethodName: "DeleteChunk",
+			Handler:    _ChunkService_DeleteChunk_Handler,
 		},
 		{
 			MethodName: "SendChunk",

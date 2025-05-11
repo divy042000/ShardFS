@@ -108,6 +108,7 @@ func (hm *HeartbeatManager) sendHeartbeat() {
 		NetworkUsage: float32(networkUsage),
 		Load:         float32(load),
 		ChunkIds:     chunkIDs,
+		TotalSpace: totalSpace,
 	}
 
 	_, err = hm.client.SendHeartbeat(context.Background(), req)

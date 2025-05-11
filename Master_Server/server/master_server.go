@@ -194,9 +194,9 @@ func NewMasterServer() (*MasterServer, error) {
 				if existing == req.ServerId {
 					ms.dataManager.serverSpaces.Unlock()
 					log.Printf("⚠️ Server %s already registered, skipping", req.ServerId)
-					return JobResult{
+					job.Response <- JobResult{
 						Success: true,
-						Data:    &pb.RegisterChunkServerResponse{Success: true, Message: "Already registered"},
+						Data:    &pb.RegisterChunkServerResponse{Success: true, Message: "Registered successfully"},
 					}
 				}
 			}
@@ -230,7 +230,7 @@ func NewMasterServer() (*MasterServer, error) {
 			}
 
 			log.Printf("✅ Registered server %s, total servers: %d", req.ServerId, len(ms.dataManager.chunkServers))
-			return JobResult{
+			job.Response <- JobResult{
 				Success: true,
 				Data:    &pb.RegisterChunkServerResponse{Success: true, Message: "Registered successfully"},
 			}
@@ -248,7 +248,7 @@ func NewMasterServer() (*MasterServer, error) {
 				log.Printf("❌ Failed to process RegisterFileJob: %v", err)
 				return JobResult{Success: false, Error: err}
 			}
-			return JobResult{
+			job.Response <- JobResult{
 				Success: true,
 				Data:    resp,
 			}
@@ -314,7 +314,7 @@ func NewMasterServer() (*MasterServer, error) {
 					},
 					Error: fmt.Errorf("file not found"),
 				}
-				return JobResult{
+				job.Response <- JobResult{
 					Success: false,
 					Error:   fmt.Errorf("file not found"),
 					Data: &pb.DeleteFileResponse{
@@ -326,9 +326,10 @@ func NewMasterServer() (*MasterServer, error) {
 			}
 
 			log.Printf("🔍 [DeleteFileJob] Metadata found: %+v", metadata)
-
+          
 			// Step 1: Delete chunks from leader
 			for index, assignment := range metadata.ChunkAssignments {
+				log.Printf("%s_%d",assignment.ChunkHash,assignment.ChunkIndex)
 				chunkID := fmt.Sprintf("%s_%d", assignment.ChunkHash, index)
 				log.Printf("🗑️ [DeleteFileJob] Deleting chunk %s from leader %s", chunkID, assignment.LeaderAddress)
 
@@ -534,7 +535,7 @@ func (ms *MasterServer) RegisterChunkServer(ctx context.Context, req *pb.Registe
 	job := Job{
 		Type:     RegisterChunkServerJob,
 		Data:     req,
-		Response: make(chan interface{}, 1),
+		Response: responseChan,
 	}
 	log.Printf("📤 Submitting RegisterChunkServerJob for %s", req.ServerId)
 	ms.workerPool.SubmitJob(job)
@@ -564,7 +565,7 @@ func (ms *MasterServer) RegisterFile(ctx context.Context, req *pb.RegisterFileRe
 	job := Job{
 		Type:     RegisterFileJob,
 		Data:     req,
-		Response: make(chan interface{}, 1),
+		Response: responseChan,
 	}
 	log.Printf("📤 Submitting RegisterFileJob for %s", req.FileName)
 	ms.workerPool.SubmitJob(job)
@@ -698,7 +699,7 @@ func sendChunkDeleteRequest(serverAddr, chunkID string) error {
 	return nil
 }
 
-// GetFileMetadata retrieves full metadata for a given file name
+
 func (ms *MasterServer) GetFileMetadata(ctx context.Context, req *pb.GetFileMetadataRequest) (*pb.GetFileMetadataResponse, error) {
 	log.Printf("📞 Received GetFileMetadata for %s from client %s", req.FileName, req.ClientId)
 
@@ -905,7 +906,7 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 		}
 
 		remainingChunks := req.ChunkSizes[i:]
-		maxChunks := ms.dataManager.MaxChunksForServer(ms, leaderID, remainingChunks)
+		maxChunks := ms.dataManager.MaxChunksForServer(ms, spaces, leaderID, remainingChunks)
 		if maxChunks == 0 {
 			log.Printf("❌ No space for chunk %d on %s", i, leaderID)
 			return nil, fmt.Errorf("no space for chunk %d on %s", i, leaderID)
@@ -960,7 +961,7 @@ func (ms *MasterServer) assignChunks(req *pb.RegisterFileRequest, fileID string)
 	return assignments, nil
 }
 
-func (dm *DataManager) MaxChunksForServer(ms *MasterServer, serverID string, chunkSizes []int64) int {
+func (dm *DataManager) MaxChunksForServer(ms *MasterServer, spaces map[string]int64, serverID string, chunkSizes []int64) int {
 	// Check if server is active (has sent a heartbeat)
 	if !ms.hm.IsChunkServerActive(serverID) {
 		log.Printf("⚠️ Server %s is not active (no heartbeat)", serverID)
@@ -970,13 +971,13 @@ func (dm *DataManager) MaxChunksForServer(ms *MasterServer, serverID string, chu
 	dm.serverSpaces.RLock()
 	defer dm.serverSpaces.RUnlock()
 
-	freeSpace, exists := dm.serverSpaces.m[serverID]
+	freeSpace, exists := spaces[serverID]
 	if !exists {
 		log.Printf("⚠️ No space data for %s (awaiting heartbeat)", serverID)
 		return 0
 	}
 
-	fs := freeSpace.(int64)
+	fs := freeSpace
 	count := 0
 	for i, size := range chunkSizes {
 		if size <= 0 {

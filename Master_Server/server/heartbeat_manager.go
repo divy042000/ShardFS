@@ -140,7 +140,7 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 		LastHeartbeat: time.Now(),
 	}
 	hm.ChunkServers[req.ServerId] = info
-
+	log.Printf("%d", req.TotalSpace)
 	// Update DataManager
 
 	hm.ms.dataManager.serverSpaces.Lock()
@@ -182,8 +182,8 @@ func (hm *HeartbeatManager) SendHeartbeat(ctx context.Context, req *pb.Heartbeat
 	}
 
 	log.Printf(
-		"💓 Heartbeat [%s]: CPU=%.2f%%, Mem=%.2f%%, Free=%dB, Total=%dB, Load=%.2f, Net=%.2fKB/s, Chunks=%d, Score=%.3f",
-		req.ServerId, req.CpuUsage, req.MemoryUsage, req.FreeSpace, req.TotalSpace, req.Load, req.NetworkUsage, len(req.ChunkIds), score,
+		"💓 Heartbeat [%s]: CPU=%.2f%%, Mem=%.2f%%, Free=%dB,Load=%.2f, Net=%.2fKB/s, Chunks=%d",
+		req.ServerId, req.CpuUsage, req.MemoryUsage, req.FreeSpace, req.Load, req.NetworkUsage, len(req.ChunkIds),
 	)
 
 	return &pb.HeartbeatResponse{
@@ -227,6 +227,7 @@ func (hm *HeartbeatManager) calculateScore(info *ChunkServerInfo) float64 {
 		}
 	}
 	w := hm.ScoreWeights
+	log.Printf("")
 	return w.Space*spaceScore + w.CPU*computeScore + w.Memory*memoryScore + w.Network*networkScore + w.Load*loadScore
 }
 
@@ -317,12 +318,12 @@ func (hm *HeartbeatManager) GetActiveChunkServers(servers []string) []string {
 }
 
 func (hm *HeartbeatManager) IsChunkServerActive(serverID string) bool {
-    hm.mu.Lock()
-    defer hm.mu.Unlock()
-    info, exists := hm.ChunkServers[serverID]
-    if !exists {
-        return false
-    }
-    // Consider server inactive if last heartbeat is older than 30 seconds
-    return time.Since(info.LastHeartbeat) < 30*time.Second
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	info, exists := hm.ChunkServers[serverID]
+	if !exists {
+		return false
+	}
+	// Consider server inactive if last heartbeat is older than 30 seconds
+	return time.Since(info.LastHeartbeat) < 30*time.Second
 }

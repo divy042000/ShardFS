@@ -8,7 +8,7 @@ option go_package = "./";
 service ChunkService {
   rpc UploadChunk (stream ChunkUploadRequest) returns (ChunkUploadResponse) {}
   rpc DownloadChunk(DownloadRequest) returns (DownloadResponse);
-    rpc DeleteChunk(DeleteChunkRequest) returns (DeleteChunkResponse);
+ 
   rpc SendChunk(ReplicationRequest) returns (ReplicationResponse);
 }
 
@@ -64,11 +64,3 @@ message DownloadResponse {
 }
 
 
-message DeleteChunkRequest {
-  string chunk_id = 1;
-}
-
-message DeleteChunkResponse {
-  bool success = 1;
-  string message = 2;
-}

@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	MasterService_RegisterChunkServer_FullMethodName = "/proto.MasterService/RegisterChunkServer"
+	MasterService_DeleteChunk_FullMethodName         = "/proto.MasterService/DeleteChunk"
 )
 
 // MasterServiceClient is the client API for MasterService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MasterServiceClient interface {
 	RegisterChunkServer(ctx context.Context, in *RegisterChunkServerRequest, opts ...grpc.CallOption) (*RegisterChunkServerResponse, error)
+	DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error)
 }
 
 type masterServiceClient struct {
@@ -47,11 +49,22 @@ func (c *masterServiceClient) RegisterChunkServer(ctx context.Context, in *Regis
 	return out, nil
 }
 
+func (c *masterServiceClient) DeleteChunk(ctx context.Context, in *DeleteChunkRequest, opts ...grpc.CallOption) (*DeleteChunkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteChunkResponse)
+	err := c.cc.Invoke(ctx, MasterService_DeleteChunk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MasterServiceServer is the server API for MasterService service.
 // All implementations must embed UnimplementedMasterServiceServer
 // for forward compatibility.
 type MasterServiceServer interface {
 	RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error)
+	DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error)
 	mustEmbedUnimplementedMasterServiceServer()
 }
 
@@ -64,6 +77,9 @@ type UnimplementedMasterServiceServer struct{}
 
 func (UnimplementedMasterServiceServer) RegisterChunkServer(context.Context, *RegisterChunkServerRequest) (*RegisterChunkServerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterChunkServer not implemented")
+}
+func (UnimplementedMasterServiceServer) DeleteChunk(context.Context, *DeleteChunkRequest) (*DeleteChunkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteChunk not implemented")
 }
 func (UnimplementedMasterServiceServer) mustEmbedUnimplementedMasterServiceServer() {}
 func (UnimplementedMasterServiceServer) testEmbeddedByValue()                       {}
@@ -104,6 +120,24 @@ func _MasterService_RegisterChunkServer_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MasterService_DeleteChunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteChunkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MasterServiceServer).DeleteChunk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MasterService_DeleteChunk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MasterServiceServer).DeleteChunk(ctx, req.(*DeleteChunkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MasterService_ServiceDesc is the grpc.ServiceDesc for MasterService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +148,10 @@ var MasterService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterChunkServer",
 			Handler:    _MasterService_RegisterChunkServer_Handler,
+		},
+		{
+			MethodName: "DeleteChunk",
+			Handler:    _MasterService_DeleteChunk_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

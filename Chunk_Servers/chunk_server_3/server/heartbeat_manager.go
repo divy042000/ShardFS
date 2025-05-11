@@ -74,7 +74,7 @@ func (hm *HeartbeatManager) StartHeartbeat() {
 
 	ticker := time.NewTicker(hm.interval)
 	defer ticker.Stop()
-
+	log.Printf("Sending Heartbeat to Master Server !")
 	for range ticker.C {
 		hm.sendHeartbeat()
 	}
@@ -108,8 +108,8 @@ func (hm *HeartbeatManager) sendHeartbeat() {
 		NetworkUsage: float32(networkUsage),
 		Load:         float32(load),
 		ChunkIds:     chunkIDs,
+		TotalSpace: totalSpace,
 	}
-
 	_, err = hm.client.SendHeartbeat(context.Background(), req)
 	if err != nil {
 		log.Printf("⚠️ Heartbeat failed: %v", err)

@@ -7,50 +7,68 @@ option go_package = "./";
 // Chunk Service for handling chunk operations
 service ChunkService {
   rpc UploadChunk (stream ChunkUploadRequest) returns (ChunkUploadResponse) {}
-  rpc ReadChunk(ReadRequest) returns (ReadResponse);
+  rpc DownloadChunk(DownloadRequest) returns (DownloadResponse);
+    rpc DeleteChunk(DeleteChunkRequest) returns (DeleteChunkResponse);
   rpc SendChunk(ReplicationRequest) returns (ReplicationResponse);
 }
 
 
-message ChunkUploadRequest {
-  string file_id = 1;
-  string chunk_id = 2;       
-  bytes data = 3;            
-  string leader = 4;         
-  string follower1 = 5;      
-  string follower2 = 6;  
-}
-
-
-message ChunkUploadResponse {
-  bool success = 1;          
-  string message = 2;       
-  string file_id = 3;
-  string chunk_id = 4;
-}
-
-// Request for reading a chunk
-message ReadRequest {
-  string chunk_id = 1;
-}
-
-// Response after reading a chunk
-message ReadResponse {
-  bool success = 1;
-  bytes data = 2;
-}
-
-// Request for chunk replication
 message ReplicationRequest {
   string file_id = 1;
-  string chunk_id = 2;
-  bytes data = 3;
-  repeated string followers = 4;
+  string chunk_hash = 2;       
+  int32 chunk_index = 3; 
+  bytes data = 4;
+  repeated string followers = 5;
 }
 
 
 message ReplicationResponse {
+  bool success = 1;                   
+  string message = 2; 
+  string chunk_hash = 3;                         
+  map<string, bool> status_map = 4;    
+}
+
+
+message ChunkUploadRequest {
+  string file_id = 1;        
+  string chunk_hash = 2;       
+   int32 chunk_index = 3; 
+  bytes data = 4;            
+  string leader = 5;         
+  string follower1 = 6;      
+  string follower2 = 7;      
+}
+
+message ChunkUploadResponse {
+  bool success = 1;         
+  string message = 2;       
+  string file_id = 3;      
+  string chunk_hash = 4;     
+}
+
+
+// Request for reading a chunk
+message DownloadRequest {
+  string chunk_hash = 1;
+  int32 chunk_index = 2;
+}
+
+// Response after reading a chunk
+message DownloadResponse {
+ string chunk_hash = 1;
+  int32 chunk_index = 2;
+  bytes data = 3;
+  bool success = 4;
+  string message = 5;
+}
+
+
+message DeleteChunkRequest {
+  string chunk_id = 1;
+}
+
+message DeleteChunkResponse {
   bool success = 1;
   string message = 2;
-  map<string, bool> status_map = 3;
 }

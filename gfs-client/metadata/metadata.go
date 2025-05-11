@@ -1,7 +1,7 @@
 package metadata
 
 import (
-	"crypto/sha256"
+	"crypto/md5"
 	"encoding/hex"
 	"time"
 
@@ -59,6 +59,6 @@ func (m *FileMetadata) ToProto() *pb.RegisterFileRequest {
 
 // GenerateChunkHash computes SHA-256 hash for a chunk
 func GenerateChunkHash(data []byte) string {
-	hash := sha256.Sum256(data)
+	hash := md5.Sum(data)
 	return hex.EncodeToString(hash[:])
 }

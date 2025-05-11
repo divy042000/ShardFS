@@ -4,8 +4,8 @@ import (
 	pb "chunk_server_3/proto"
 	"chunk_server_3/storage"
 	"context"
-	"io"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -51,9 +51,8 @@ func NewChunkServer(serverID, storagePath, masterAddress, selfAddress string, wo
 	return cs
 }
 
-
 func (cs *ChunkServer) Start() {
-	// Register with master
+	log.Println("Starting ChunkServer")
 	masterAddr := "master_server_container:50052"
 	ChunkServerAddr := os.Getenv("CHUNK_SERVER_ADDRESS")
 	conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -64,16 +63,18 @@ func (cs *ChunkServer) Start() {
 	client := pb.NewMasterServiceClient(conn)
 	log.Printf("Attempting to register chunk server %s at %s", cs.serverID, ChunkServerAddr)
 	resp, err := client.RegisterChunkServer(context.Background(), &pb.RegisterChunkServerRequest{
-		ServerId: cs.serverID,     // e.g., "chunk_server_1"
-		Address:  ChunkServerAddr, // e.g., "chunk_server_container:50051"
+		ServerId: cs.serverID,
+		Address:  ChunkServerAddr,
 	})
+
 	if err != nil {
 		log.Printf("❌ Failed to register with master: %v", err)
 	} else {
 		log.Printf("✅ Registered with master: %s", resp.Message)
 	}
 
-	// Start gRPC server
+	log.Printf("Sending Heartbeat to Master Server !")
+
 	listener, err := net.Listen("tcp", ":50054")
 	if err != nil {
 		log.Fatalf("❌ Failed to listen on port 50054: %v", err)
@@ -90,7 +91,6 @@ func (cs *ChunkServer) Start() {
 		log.Fatalf("❌ Failed to serve gRPC: %v", err)
 	}
 }
-
 
 func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) error {
 	var chunkHash, fileID string
@@ -109,21 +109,21 @@ func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) err
 			log.Printf("💾 Submitting write job for chunk (hash: %s, index: %d) to worker pool", chunkHash, chunkIndex)
 			storageChan := make(chan JobResult, 1)
 			cs.workerPool.SubmitJob(Job{
-				Type:        WriteJob,
-				ChunkHash:   chunkHash,
-				ChunkIndex:  chunkIndex,
-				Data:        data,
-				Response:    storageChan,
+				Type:       WriteJob,
+				ChunkHash:  chunkHash,
+				ChunkIndex: chunkIndex,
+				Data:       data,
+				Response:   storageChan,
 			})
 
 			storageResult := <-storageChan
 			if !storageResult.Success {
 				log.Printf("❌ Failed to write chunk (hash: %s, index: %d): %s", chunkHash, chunkIndex, storageResult.Message)
 				return stream.SendAndClose(&pb.ChunkUploadResponse{
-					Success:    false,
-					Message:    storageResult.Message,
-					FileId:     fileID,
-					ChunkHash:  chunkHash,
+					Success:   false,
+					Message:   storageResult.Message,
+					FileId:    fileID,
+					ChunkHash: chunkHash,
 				})
 			}
 			log.Printf("✅ Successfully stored chunk (hash: %s, index: %d) at leader '%s'", chunkHash, chunkIndex, leader)
@@ -146,10 +146,10 @@ func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) err
 				if !replicationResult.Success {
 					log.Printf("❌ Replication failed for chunk (hash: %s, index: %d): %s", chunkHash, chunkIndex, replicationResult.Message)
 					return stream.SendAndClose(&pb.ChunkUploadResponse{
-						Success:    false,
-						Message:    "Replication failed",
-						FileId:     fileID,
-						ChunkHash:  chunkHash,
+						Success:   false,
+						Message:   "Replication failed",
+						FileId:    fileID,
+						ChunkHash: chunkHash,
 					})
 				}
 				log.Printf("✅ Replication completed for chunk (hash: %s, index: %d)", chunkHash, chunkIndex)
@@ -159,10 +159,10 @@ func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) err
 
 			log.Printf("📦 UploadChunk process complete for chunk (hash: %s, index: %d) of file '%s'", chunkHash, chunkIndex, fileID)
 			return stream.SendAndClose(&pb.ChunkUploadResponse{
-				Success:    true,
-				Message:    "Chunk uploaded and replicated",
-				FileId:     fileID,
-				ChunkHash:  chunkHash,
+				Success:   true,
+				Message:   "Chunk uploaded and replicated",
+				FileId:    fileID,
+				ChunkHash: chunkHash,
 			})
 		}
 
@@ -184,7 +184,6 @@ func (cs *ChunkServer) UploadChunk(stream pb.ChunkService_UploadChunkServer) err
 	}
 }
 
-
 func (cs *ChunkServer) SendChunk(ctx context.Context, req *pb.ReplicationRequest) (*pb.ReplicationResponse, error) {
 	log.Printf("📥 [RECV] Follower '%s' received chunk (hash: %s, index: %d) of file '%s' for replication",
 		cs.selfAddress, req.ChunkHash, req.ChunkIndex, req.FileId)
@@ -194,11 +193,11 @@ func (cs *ChunkServer) SendChunk(ctx context.Context, req *pb.ReplicationRequest
 		req.ChunkHash, req.ChunkIndex, cs.selfAddress)
 	responseChan := make(chan JobResult, 1)
 	cs.workerPool.SubmitJob(Job{
-		Type:        WriteJob,
-		ChunkHash:   req.ChunkHash,
-		ChunkIndex:  req.ChunkIndex,
-		Data:        req.Data,
-		Response:    responseChan,
+		Type:       WriteJob,
+		ChunkHash:  req.ChunkHash,
+		ChunkIndex: req.ChunkIndex,
+		Data:       req.Data,
+		Response:   responseChan,
 	})
 	result := <-responseChan
 
@@ -260,11 +259,10 @@ func (cs *ChunkServer) SendChunk(ctx context.Context, req *pb.ReplicationRequest
 	}, nil
 }
 
-
-
 // ReadChunk handles chunk read requests from clients
-func (cs *ChunkServer) ReadChunk(ctx context.Context, req *pb.DownloadRequest) (*pb.DownloadResponse, error) {
+func (cs *ChunkServer) DownloadChunk(ctx context.Context, req *pb.DownloadRequest) (*pb.DownloadResponse, error) {
 	chunkID := fmt.Sprintf("%s_%d", req.ChunkHash, req.ChunkIndex)
+
 	log.Printf("📥 [ChunkServer] Received read request for chunk: %s", chunkID)
 
 	// Submit the read job to the worker pool
@@ -297,7 +295,6 @@ func (cs *ChunkServer) ReadChunk(ctx context.Context, req *pb.DownloadRequest) (
 	}, nil
 }
 
-
 func (cs *ChunkServer) DeleteChunk(ctx context.Context, req *pb.DeleteChunkRequest) (*pb.DeleteChunkResponse, error) {
 	log.Printf("🧨 Received request to delete chunk '%s'", req.ChunkId)
 
@@ -314,7 +311,7 @@ func (cs *ChunkServer) DeleteChunk(ctx context.Context, req *pb.DeleteChunkReque
 
 	// Submit delete job to worker pool
 	responseChan := make(chan JobResult)
-	 job :=  Job{
+	job := Job{
 		Type:       DeleteJob,
 		ChunkHash:  chunkHash,
 		ChunkIndex: chunkIndex,
@@ -336,7 +333,6 @@ func (cs *ChunkServer) DeleteChunk(ctx context.Context, req *pb.DeleteChunkReque
 		Message: result.Message,
 	}, nil
 }
-
 
 // GetStoredChunkIds retrieves the list of stored chunk IDs from the storage directory
 func (cs *ChunkServer) GetStoredChunkIds() []string {

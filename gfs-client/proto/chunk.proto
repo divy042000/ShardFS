@@ -8,7 +8,7 @@ option go_package = "./";
 service ChunkService {
   rpc UploadChunk (stream ChunkUploadRequest) returns (ChunkUploadResponse);
 
-  rpc DownloadChunk(ChunkRequest) returns (stream ChunkData);
+  rpc DownloadChunk(DownloadRequest) returns (DownloadResponse);
 }
 
 
@@ -29,13 +29,17 @@ message ChunkUploadResponse {
   string chunk_hash = 4;       // The chunk that was uploaded
 }
 
-message ChunkData {
+// Request for reading a chunk
+message DownloadRequest {
   string chunk_hash = 1;
   int32 chunk_index = 2;
-  bytes data = 3;
 }
 
-message ChunkRequest {
-  string chunk_hash = 1;
+// Response after reading a chunk
+message DownloadResponse {
+ string chunk_hash = 1;
   int32 chunk_index = 2;
+  bytes data = 3;
+  bool success = 4;
+  string message = 5;
 }

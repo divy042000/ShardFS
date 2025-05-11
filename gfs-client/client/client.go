@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"time"
 
@@ -13,22 +12,25 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+
+
 type Client struct {
-	masterConn *grpc.ClientConn
-	master     pb.MasterServiceClient
+    masterConn *grpc.ClientConn
+    master     pb.MasterServiceClient
+    masterAddr string // Add this field
 }
 
-
 func NewClient(masterAddr string) (*Client, error) {
-	fmt.Printf("Connecting to master server at %s\n", masterAddr)
-	conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to master server: %v", err)
-	}
-	return &Client{
-		masterConn: conn,
-		master:     pb.NewMasterServiceClient(conn),
-	}, nil
+    fmt.Printf("Connecting to master server at %s\n", masterAddr)
+    conn, err := grpc.NewClient(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+    if err != nil {
+        return nil, fmt.Errorf("failed to connect to master server: %v", err)
+    }
+    return &Client{
+        masterConn: conn,
+        master:     pb.NewMasterServiceClient(conn),
+        masterAddr: masterAddr,
+    }, nil
 }
 
 func (c *Client) Close() {
@@ -51,11 +53,12 @@ func (c *Client) RegisterFile(ctx context.Context, req *pb.RegisterFileRequest) 
 
 
 func (c *Client) GetFileMetadata(ctx context.Context, fileName, clientID string) (*pb.GetFileMetadataResponse, error) {
+    log.Printf("📞 Connecting to Master Server at %s for metadata of %s", c.masterAddr, fileName)
 	req := &pb.GetFileMetadataRequest{
 		FileName: fileName,
 		ClientId: clientID,
 	}
-
+    log.Printf("Calling Get File Metadata of Client")
 	resp, err := c.master.GetFileMetadata(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file metadata: %v", err)
@@ -187,7 +190,7 @@ func (c *Client) uploadChunkOnce(
 func (c *Client) DownloadChunk(chunkServerAddr, chunkHash string, chunkIndex int32, retries int) ([]byte, error) {
 	const maxRetries = 3
 	chunkID := fmt.Sprintf("%s_%d", chunkHash, chunkIndex)
-
+    log.Printf("%s_%d", chunkHash, chunkIndex)
 	for attempt := 0; attempt <= retries && attempt <= maxRetries; attempt++ {
 		data, err := c.downloadChunkAttempt(chunkServerAddr, chunkHash, chunkIndex)
 		if err == nil {
@@ -206,29 +209,23 @@ func (c *Client) downloadChunkAttempt(chunkServerAddr, chunkHash string, chunkIn
 
 	conn, err := grpc.Dial(chunkServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to chunk server %s: %v", chunkServerAddr, err)
+		return nil, fmt.Errorf("❌ Failed to connect to chunk server %s: %v", chunkServerAddr, err)
 	}
 	defer conn.Close()
 
 	client := pb.NewChunkServiceClient(conn)
-	stream, err := client.DownloadChunk(ctx, &pb.ChunkRequest{
+	resp, err := client.DownloadChunk(ctx, &pb.DownloadRequest{
 		ChunkHash:  chunkHash,
 		ChunkIndex: chunkIndex,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to open download stream: %v", err)
+		return nil, fmt.Errorf("❌ gRPC error during DownloadChunk call: %v", err)
 	}
 
-	var data []byte
-	for {
-		chunk, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to receive chunk data: %v", err)
-		}
-		data = append(data, chunk.Data...)
+	if !resp.Success {
+		return nil, fmt.Errorf("❌ Chunk download failed: %s", resp.Message)
 	}
-	return data, nil
+
+	return resp.Data, nil
 }
+

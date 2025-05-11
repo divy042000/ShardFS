@@ -50,41 +50,35 @@ func WriteChunk(storagePath string, chunkHash string, chunkIndex int32, data []b
 	return nil
 }
 
-
-
-
-
 // WriteChunk stores a chunk on disk, generates a checksum, and saves metadata
-func ReadChunk(storagePath, chunkHash string, chunkIndex int32) ([]byte, error) {
-	// Sanitize chunkHash
-	sanitizedHash := strings.ReplaceAll(chunkHash, "/", "_")
+	func ReadChunk(storagePath, chunkHash string, chunkIndex int32) ([]byte, error) {
+		// Sanitize chunkHash
+		sanitizedHash := strings.ReplaceAll(chunkHash, "/", "_")
+		log.Printf("%s",chunkHash)
+		// Construct the chunk file name
+		baseName := fmt.Sprintf("%s_%d", sanitizedHash, chunkIndex)
+		chunkPath := filepath.Join(storagePath, baseName+".chunk")
 
-	// Construct the chunk file name
-	baseName := fmt.Sprintf("%s_%d", sanitizedHash, chunkIndex)
-	chunkPath := filepath.Join(storagePath, baseName+".chunk")
+		log.Printf("📂 Attempting to read chunk from: %s", chunkPath)
 
-	log.Printf("📂 Attempting to read chunk from: %s", chunkPath)
+		// Open the chunk file
+		file, err := os.Open(chunkPath)
+		if err != nil {
+			log.Printf("❌ Failed to open chunk file '%s': %v", chunkPath, err)
+			return nil, fmt.Errorf("failed to open chunk file: %w", err)
+		}
+		defer file.Close()
 
-	// Open the chunk file
-	file, err := os.Open(chunkPath)
-	if err != nil {
-		log.Printf("❌ Failed to open chunk file '%s': %v", chunkPath, err)
-		return nil, fmt.Errorf("failed to open chunk file: %w", err)
+		// Read the contents
+		data, err := io.ReadAll(file)
+		if err != nil {
+			log.Printf("❌ Failed to read chunk data from '%s': %v", chunkPath, err)
+			return nil, fmt.Errorf("failed to read chunk data: %w", err)
+		}
+
+		log.Printf("✅ Successfully read chunk '%s' (%d bytes)", chunkPath, len(data))
+		return data, nil
 	}
-	defer file.Close()
-
-	// Read the contents
-	data, err := io.ReadAll(file)
-	if err != nil {
-		log.Printf("❌ Failed to read chunk data from '%s': %v", chunkPath, err)
-		return nil, fmt.Errorf("failed to read chunk data: %w", err)
-	}
-
-	log.Printf("✅ Successfully read chunk '%s' (%d bytes)", chunkPath, len(data))
-	return data, nil
-}
-
-
 
 // ComputeChecksum generates an MD5 checksum for chunk integrity verification
 func ComputeChecksum(data []byte) string {
@@ -108,7 +102,6 @@ func AtomicWriteFile(filePath string, data []byte) error {
 	return os.Rename(tempFile, filePath)
 }
 
-
 func DeleteChunkFromDisk(chunkHash string, chunkIndex int32, baseDir string) error {
 	chunkID := fmt.Sprintf("%s_%d", chunkHash, chunkIndex)
 	chunkPath := filepath.Join(baseDir, chunkID)
@@ -117,18 +110,16 @@ func DeleteChunkFromDisk(chunkHash string, chunkIndex int32, baseDir string) err
 	tempChunkPath := chunkPath + ".deleting"
 	tempMetaPath := metaPath + ".deleting"
 
-	
 	if err := os.Rename(chunkPath, tempChunkPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to rename chunk file '%s': %v", chunkPath, err)
 	}
 
 	if err := os.Rename(metaPath, tempMetaPath); err != nil && !os.IsNotExist(err) {
-	
+
 		_ = os.Rename(tempChunkPath, chunkPath)
 		return fmt.Errorf("failed to rename metadata file '%s': %v", metaPath, err)
 	}
 
-	
 	if err := os.Remove(tempChunkPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete temp chunk file '%s': %v", tempChunkPath, err)
 	}
@@ -139,8 +130,6 @@ func DeleteChunkFromDisk(chunkHash string, chunkIndex int32, baseDir string) err
 
 	return nil
 }
-
-
 
 // ListStoredChunks returns a list of all stored chunk IDs in the storage path
 func ListStoredChunks(storagePath string) ([]string, error) {

@@ -1,1 +1,1 @@
-# Distributed-File-Sharing-System : A BTEP PROJECT
+# ShardFS : A BTEP PROJECT
